@@ -15,6 +15,7 @@
   <img alt="Linux" src="https://img.shields.io/badge/Linux-supported-1793D1?style=flat-square&logo=linux&logoColor=white">
   <img alt="Windows preview" src="https://img.shields.io/badge/Windows-preview-0078D6?style=flat-square&logo=windows&logoColor=white">
   <img alt="Local word scoring" src="https://img.shields.io/badge/word%20scoring-local-2E8B57?style=flat-square">
+  <img alt="MIT License" src="https://img.shields.io/github/license/telhariri/multilang-keyboard?style=flat-square">
 </p>
 
 ---
@@ -109,6 +110,14 @@ wayland_backend.py             خدمة التصحيح المحلية عبر م�
 scripts/install-wayland-ime.sh تثبيت إضافة Wayland على Arch وEndeavourOS
 tests/                         اختبارات Python
 ```
+
+## ادعم المشروع وشارك رأيك
+
+إذا وجدت Multilang مفيدًا، أطلب منك دعم هذا المشروع والمشاريع المشابهة: امنح المستودع نجمة، شاركه مع المهتمين، أو ساهم في تطويره. ملاحظاتك وتقارير الأخطاء واقتراحاتك تساعدني على تحسين الأداة؛ أضف خطوات إعادة المشكلة ونظام التشغيل الذي تستخدمه في [مشكلة جديدة على GitHub](https://github.com/telhariri/multilang-keyboard/issues).
+
+## الترخيص
+
+هذا المشروع مرخّص بموجب **MIT**. يمكنك استخدامه وتعديله وتوزيعه مع الإبقاء على إشعار حقوق النشر ونص الترخيص؛ راجع ملف [LICENSE](LICENSE) للتفاصيل.
 
 ## للمساهمين
 
