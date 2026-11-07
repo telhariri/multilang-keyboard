@@ -1,0 +1,7 @@
+[Addon]
+Name=Multilang
+Category=InputMethod
+Version=@PROJECT_VERSION@
+Library=multilang
+Type=SharedLibrary
+OnDemand=True

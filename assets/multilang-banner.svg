@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="500" viewBox="0 0 1440 500" role="img" aria-labelledby="title description">
+  <title id="title">Multilang keyboard layout correction</title>
+  <desc id="description">Arabic keyboard input is corrected to English and the keyboard layout switches automatically.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="0.55" stop-color="#121b36"/>
+      <stop offset="1" stop-color="#211a46"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#52e0d2"/>
+      <stop offset="1" stop-color="#74a7ff"/>
+    </linearGradient>
+    <linearGradient id="good" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4ee0b2"/>
+      <stop offset="1" stop-color="#6ce9dc"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#596dff" stop-opacity=".26"/>
+      <stop offset="1" stop-color="#596dff" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#a9b8ff" stroke-opacity=".045" stroke-width="1"/>
+    </pattern>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#020617" flood-opacity=".55"/>
+    </filter>
+    <filter id="softGlow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+  </defs>
+
+  <rect width="1440" height="500" rx="30" fill="url(#bg)"/>
+  <rect width="1440" height="500" rx="30" fill="url(#grid)"/>
+  <ellipse cx="1050" cy="235" rx="390" ry="310" fill="url(#glow)"/>
+  <circle cx="1260" cy="70" r="84" fill="#59d6cb" opacity=".08" filter="url(#softGlow)"/>
+  <circle cx="265" cy="440" r="95" fill="#7274ff" opacity=".09" filter="url(#softGlow)"/>
+
+  <g opacity=".7" fill="none" stroke="#96a6d8" stroke-opacity=".3">
+    <path d="M74 94h38m-19-19v38M1320 390h42m-21-21v42"/>
+    <circle cx="1295" cy="110" r="3" fill="#a9bbff" stroke="none"/>
+    <circle cx="140" cy="378" r="3" fill="#59d6cb" stroke="none"/>
+    <circle cx="1240" cy="410" r="3" fill="#a9bbff" stroke="none"/>
+  </g>
+
+  <g transform="translate(92 106)">
+    <text x="0" y="0" fill="#8ea0cb" font-family="Inter, Segoe UI, sans-serif" font-size="15" font-weight="700" letter-spacing="4">WORD-BY-WORD CORRECTION</text>
+    <text x="0" y="76" fill="#ffffff" font-family="Inter, Segoe UI, sans-serif" font-size="48" font-weight="700">One keyboard.</text>
+    <text x="0" y="134" fill="#c8d4f0" font-family="Inter, Segoe UI, sans-serif" font-size="42" font-weight="600">Two languages.</text>
+    <text x="0" y="184" fill="#94a4c8" font-family="Inter, Segoe UI, sans-serif" font-size="20">Correct the word. Keep your flow.</text>
+
+    <g transform="translate(0 238)" filter="url(#shadow)">
+      <rect width="99" height="76" rx="17" fill="#1a2745" stroke="#48617f" stroke-width="1.5"/>
+      <text x="49.5" y="49" text-anchor="middle" fill="#ffffff" font-family="Noto Sans Arabic, Segoe UI, sans-serif" font-size="35" font-weight="600">ض</text>
+      <text x="49.5" y="102" text-anchor="middle" fill="#8193ba" font-family="Inter, Segoe UI, sans-serif" font-size="12" font-weight="700" letter-spacing="2">ARABIC</text>
+      <path d="M126 38h54m-14-14 14 14-14 14" fill="none" stroke="url(#accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="201" width="99" height="76" rx="17" fill="#1a2745" stroke="#48617f" stroke-width="1.5"/>
+      <text x="250.5" y="50" text-anchor="middle" fill="#ffffff" font-family="Inter, Segoe UI, sans-serif" font-size="35" font-weight="600">A</text>
+      <text x="250.5" y="102" text-anchor="middle" fill="#8193ba" font-family="Inter, Segoe UI, sans-serif" font-size="12" font-weight="700" letter-spacing="2">ENGLISH</text>
+    </g>
+  </g>
+
+  <g transform="translate(650 93)" filter="url(#shadow)">
+    <rect width="696" height="315" rx="28" fill="#111b31" stroke="#344668" stroke-width="1.5"/>
+    <path d="M1 72h694" stroke="#344668"/>
+    <circle cx="37" cy="36" r="6" fill="#ff7085"/>
+    <circle cx="60" cy="36" r="6" fill="#ffcf70"/>
+    <circle cx="83" cy="36" r="6" fill="#5bd6ad"/>
+    <text x="124" y="42" fill="#8799bd" font-family="Inter, Segoe UI, sans-serif" font-size="14" font-weight="700" letter-spacing="2">A WORD, NOT A PARAGRAPH</text>
+
+    <text x="55" y="124" fill="#8091b4" font-family="Inter, Segoe UI, sans-serif" font-size="13" font-weight="700" letter-spacing="2">TYPED WITH ARABIC LAYOUT</text>
+    <rect x="54" y="144" width="588" height="61" rx="13" fill="#182541" stroke="#2c3d5f"/>
+    <text x="82" y="184" fill="#cbd6ec" font-family="Noto Sans Arabic, Segoe UI, sans-serif" font-size="25">اثممخ</text>
+    <text x="600" y="181" text-anchor="end" fill="#8799bd" font-family="Inter, Segoe UI, sans-serif" font-size="13">space</text>
+
+    <path d="M348 218v22m-8-8 8 8 8-8" fill="none" stroke="url(#accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="54" y="250" width="588" height="47" rx="13" fill="#102d35" stroke="#267268"/>
+    <circle cx="81" cy="273.5" r="7" fill="url(#good)"/>
+    <text x="103" y="281" fill="#70e4c4" font-family="Inter, Segoe UI, sans-serif" font-size="21" font-weight="600">hello</text>
+    <text x="608" y="279" text-anchor="end" fill="#6ccab2" font-family="Inter, Segoe UI, sans-serif" font-size="12" font-weight="700" letter-spacing="1.4">LAYOUT SWITCHED</text>
+  </g>
+
+  <text x="1370" y="467" text-anchor="end" fill="#7584a8" font-family="Inter, Segoe UI, sans-serif" font-size="12" letter-spacing="2">ARABIC ↔ ENGLISH</text>
+</svg>

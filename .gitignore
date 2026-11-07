@@ -1,0 +1,23 @@
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Native build outputs
+build/
+native/target/
+*.so
+*.dylib
+*.dll
+
+# User and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local preview bundle is incomplete and not a release artifact
+Multilang-Windows-Test.zip
+windows-test/
