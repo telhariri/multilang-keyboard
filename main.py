@@ -734,7 +734,8 @@ class TypingMonitor:
         if has_arabic(word):
             if normalized in ARABIC_WORDS:
                 return None, None
-            candidate = to_english(word).casefold()
+            layout_candidate = to_english(word)
+            candidate = layout_candidate.casefold()
             # Wordfreq normalizes punctuation away, so a candidate such as
             # `,a,` (Arabic "وشو" on the physical layout) can otherwise score
             # like a common English token. Only score plausible English words.
@@ -743,7 +744,13 @@ class TypingMonitor:
             english_score = zipf_frequency(candidate, "en")
             arabic_score = zipf_frequency(normalized, "ar")
             if _passes_language_confidence(english_score, arabic_score):
-                if word.isupper():
+                # A capital typed while the Arabic layout is active is recorded
+                # as its physical US letter by the Windows hook (for example,
+                # `Hثممخ` for `Hello`). Keep that explicit casing after mapping
+                # the remaining Arabic letters back to English.
+                if any(char.isascii() and char.isupper() for char in layout_candidate):
+                    candidate = layout_candidate
+                elif word.isupper():
                     candidate = candidate.upper()
                 elif word.istitle():
                     candidate = candidate.title()

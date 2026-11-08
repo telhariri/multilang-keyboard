@@ -105,6 +105,7 @@ class WindowsKeyboardHook:
         self.ready = threading.Event()
         self.error: Exception | None = None
         self.modifiers_down: set[int] = set()
+        self.shift_keys_down: set[int] = set()
         self.suppressed_keyups: set[int] = set()
         self.pending_replacement: tuple[int, str] | None = None
         self.pending_lock = threading.Lock()
@@ -176,6 +177,8 @@ class WindowsKeyboardHook:
         self.user32.GetForegroundWindow.restype = wintypes.HWND
         self.user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
         self.user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+        self.user32.LoadKeyboardLayoutW.argtypes = [wintypes.LPCWSTR, wintypes.UINT]
+        self.user32.LoadKeyboardLayoutW.restype = wintypes.HKL
         self.user32.ToUnicodeEx.argtypes = [
             wintypes.UINT, wintypes.UINT, ctypes.POINTER(ctypes.c_ubyte),
             ctypes.POINTER(wintypes.WCHAR), ctypes.c_int, wintypes.UINT, wintypes.HKL,
@@ -234,6 +237,9 @@ class WindowsKeyboardHook:
             if key in self.suppressed_keyups:
                 self.suppressed_keyups.discard(key)
                 return True
+            if key in VK_SHIFT_KEYS:
+                self.shift_keys_down.discard(key)
+                return False
             if key in VK_CONTROL_KEYS | VK_ALT_KEYS | VK_WINDOWS_KEYS:
                 self.modifiers_down.discard(key)
             return False
@@ -242,6 +248,9 @@ class WindowsKeyboardHook:
         if key in self.suppressed_keyups:
             return True
 
+        if key in VK_SHIFT_KEYS:
+            self.shift_keys_down.add(key)
+            return False
         if key in VK_CONTROL_KEYS | VK_ALT_KEYS | VK_WINDOWS_KEYS:
             self.modifiers_down.add(key)
             self.monitor.clear_buffer()
@@ -262,10 +271,24 @@ class WindowsKeyboardHook:
         if key == VK_DELETE or key in VK_NAVIGATION_KEYS or key in (VK_RETURN, VK_TAB, VK_ESCAPE):
             self.monitor.clear_buffer()
             return False
-        if key in VK_SHIFT_KEYS:
-            return False
-
-        char = self._translate_key(int(event.vkCode), int(event.scanCode), hwnd)
+        char = self._translate_key(
+            int(event.vkCode), int(event.scanCode), hwnd,
+            shift_pressed=bool(self.shift_keys_down),
+        )
+        if self.shift_keys_down and self._active_layout_id(hwnd) == 0x0401:
+            # Arabic 101 uses Shift+letter for marks and symbols. For detection,
+            # read the same physical key through US English so an intended
+            # capital English letter can be recognized. The original event is
+            # still passed through unchanged.
+            us_layout = self.user32.LoadKeyboardLayoutW("00000409", 0)
+            if us_layout:
+                physical = self._translate_key(
+                    int(event.vkCode), int(event.scanCode), hwnd,
+                    layout_override=us_layout,
+                    shift_pressed=True,
+                )
+                if len(physical) == 1 and physical.isascii() and physical.isalpha():
+                    char = physical
         if not char:
             return False
         if all(
@@ -282,14 +305,36 @@ class WindowsKeyboardHook:
             self.monitor.clear_buffer()
         return False
 
-    def _translate_key(self, vk_code: int, scan_code: int, hwnd) -> str:
+    def _active_layout_id(self, hwnd) -> int:
         thread_id = self.user32.GetWindowThreadProcessId(hwnd, None) if hwnd else 0
         layout = self.user32.GetKeyboardLayout(thread_id)
+        if isinstance(layout, int):
+            value = layout
+        else:
+            value = ctypes.cast(layout, ctypes.c_void_p).value or 0
+        return value & 0xFFFF
+
+    def _translate_key(
+        self,
+        vk_code: int,
+        scan_code: int,
+        hwnd,
+        *,
+        layout_override=None,
+        shift_pressed: bool | None = None,
+    ) -> str:
+        thread_id = self.user32.GetWindowThreadProcessId(hwnd, None) if hwnd else 0
+        layout = layout_override or self.user32.GetKeyboardLayout(thread_id)
         state = (ctypes.c_ubyte * 256)()
         self.user32.GetKeyboardState(state)
         for key in VK_SHIFT_KEYS | VK_CONTROL_KEYS | VK_ALT_KEYS:
             if self.user32.GetAsyncKeyState(key) & 0x8000:
                 state[key] |= 0x80
+        if shift_pressed is not None:
+            shifted_keys = self.shift_keys_down if shift_pressed else set()
+            state[0x10] = (state[0x10] & 0x01) | (0x80 if shifted_keys else 0)
+            for key in VK_SHIFT_KEYS - {0x10}:
+                state[key] = (state[key] & 0x01) | (0x80 if key in shifted_keys else 0)
         # The hook fires before the foreground app receives the key, so add this
         # key's down state for layout translation.
         state[vk_code] |= 0x80

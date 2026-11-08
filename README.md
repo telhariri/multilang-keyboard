@@ -13,7 +13,7 @@
 <p align="center">
   <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white">
   <img alt="Linux" src="https://img.shields.io/badge/Linux-supported-1793D1?style=flat-square&logo=linux&logoColor=white">
-  <img alt="Windows preview" src="https://img.shields.io/badge/Windows-preview-0078D6?style=flat-square&logo=windows&logoColor=white">
+  <img alt="Windows supported" src="https://img.shields.io/badge/Windows-supported-0078D6?style=flat-square&logo=windows&logoColor=white">
   <img alt="Local word scoring" src="https://img.shields.io/badge/word%20scoring-local-2E8B57?style=flat-square">
   <img alt="MIT License" src="https://img.shields.io/github/license/telhariri/multilang-keyboard?style=flat-square">
 </p>
@@ -46,36 +46,35 @@
 |:--|:--|:--|
 | **KDE Plasma على Wayland** | مستخدم ومتحقق منه على EndeavourOS | يتطلب إضافة Fcitx5؛ يعمل في التطبيقات التي تقبل الإدخال عبر Fcitx. بعض تطبيقات Wayland لا تتيح هذا النوع من الإدخال. |
 | **Linux على X11** | مدعوم مع إعدادات النظام المناسبة | يعتمد اعتراض المفاتيح وتبديل التخطيط على جلسة X11 وأدوات التخطيط المتاحة. |
-| **Windows** | معاينة تجريبية | يستخدم واجهات Windows لإدخال النص وتبديل التخطيط. لم تُتحقق هذه النسخة على جهاز Windows ضمن هذا الإصدار. |
+| **Windows 10/11 (64 بت)** | مدعوم | يتوفر مثبت وحزمة محمولة من [أحدث إصدار](https://github.com/telhariri/multilang-keyboard/releases/latest). يستخدم خطاف لوحة مفاتيح أصليًا بـRust وواجهات Windows للإدخال والتبديل. |
 | **Wayland خارج KDE** | غير مدعوم حاليًا | عزل Wayland يمنع مراقبة المفاتيح عالميًا؛ إضافة Fcitx الحالية تستهدف KDE/KWin. |
 
 يفترض التطبيق تخطيطي **US English** و**Arabic 101**.
 
 ## التثبيت والتشغيل
 
-يتطلب Python 3.10 أو أحدث. يحتاج التثبيت الأول إلى اتصال بالإنترنت لتنزيل المكتبات وبيانات الكلمات؛ بعد ذلك يعمل التقييم دون اتصال.
+### Windows 10/11 (64 بت)
 
-### Linux وWindows
+نزّل [مثبّت Multilang](https://github.com/telhariri/multilang-keyboard/releases/latest/download/Multilang-Setup.exe) أو [الحزمة المحمولة](https://github.com/telhariri/multilang-keyboard/releases/latest/download/Multilang-Windows-x64.zip) من صفحة الإصدارات. لا يحتاج إصدار Windows إلى تثبيت Python أو Rust. يضيف المثبّت اختصارًا إلى قائمة ابدأ، ويتيح إنشاء اختصار على سطح المكتب. يبدأ التطبيق مع تسجيل الدخول افتراضيًا؛ أزل تحديد الخيار أثناء التثبيت لإيقاف التشغيل التلقائي.
+
+تأكد من إضافة تخطيطي **US English** و**Arabic 101** في إعدادات Windows. يعمل التطبيق في شريط النظام؛ افتح قائمته لإظهار النافذة أو إيقاف التصحيح أو الخروج.
+
+### Linux
+
+يتطلب تشغيل نسخة المصدر Python 3.10 أو أحدث. يحتاج التثبيت الأول إلى اتصال بالإنترنت لتنزيل المكتبات وبيانات الكلمات؛ بعد ذلك يعمل التقييم دون اتصال.
+
+استنسخ المشروع:
 
 ```bash
 git clone https://github.com/telhariri/multilang-keyboard.git
 cd multilang-keyboard
 ```
 
-على Linux، أنشئ البيئة الافتراضية ثم ثبّت المتطلبات وشغّل التطبيق:
+أنشئ البيئة الافتراضية ثم ثبّت المتطلبات وشغّل التطبيق:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
-python main.py
-```
-
-على Windows، استخدم PowerShell:
-
-```powershell
-py -3 -m venv .venv
-.\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 python main.py
 ```
@@ -96,7 +95,7 @@ python main.py
 
 تُقيّم الكلمات باستخدام بيانات `wordfreq` المحلية. لا يسجّل التطبيق النص ولا يرسله إلى الشبكة. في تكامل Wayland، يمرّر Fcitx الكلمة الحالية فقط إلى التطبيق عبر مقبس محلي مقيّد بحساب المستخدم.
 
-يقبل المصحح التحويل عندما تتجاوز درجة تكرار الكلمة حدًا أدنى وتتفوق بوضوح على اللغة الأخرى. إن لم تتوفر بيانات التكرار أو لم تكن النتيجة واضحة، يبقى النص كما كُتب. يستخدم المشروع Python للواجهة والتصحيح، وRust لمراقب Windows الاختياري، وإضافة C++ لـFcitx5 على KDE Wayland.
+يقبل المصحح التحويل عندما تتجاوز درجة تكرار الكلمة حدًا أدنى وتتفوق بوضوح على اللغة الأخرى. إن لم تتوفر بيانات التكرار أو لم تكن النتيجة واضحة، يبقى النص كما كُتب. يستخدم المشروع Python للواجهة والتصحيح، ومراقب لوحة مفاتيح أصليًا بـRust على Windows، وإضافة C++ لـFcitx5 على KDE Wayland.
 
 ## بنية المشروع
 
@@ -105,6 +104,9 @@ main.py                       الواجهة، كشف اللغة، والتصح�
 windows_backend.py            تكامل لوحة المفاتيح في Windows
 rust_backend.py               واجهة مكتبة Rust الاختيارية
 native/                       مصدر مراقب لوحة المفاتيح بـRust
+multilang.spec                إعداد بناء تطبيق Windows
+windows/installer.iss         إعداد مثبت Windows
+.github/workflows/windows.yml بناء Windows واختباره ونشر إصداراته
 wayland/fcitx5/                إضافة Fcitx5 لـKDE Wayland
 wayland_backend.py             خدمة التصحيح المحلية عبر مقبس Unix
 scripts/install-wayland-ime.sh تثبيت إضافة Wayland على Arch وEndeavourOS
@@ -128,4 +130,4 @@ python -m unittest discover -s tests
 cargo test --manifest-path native/Cargo.toml
 ```
 
-راجع [README.en.md](README.en.md) للنسخة الإنجليزية. المشروع في مرحلة معاينة؛ دعم Windows ما زال يحتاج تحققًا عمليًا على جهاز Windows.
+راجع [README.en.md](README.en.md) للنسخة الإنجليزية. تُبنى حزم Windows x64 وتُختبر آليًا على Windows عبر GitHub Actions.

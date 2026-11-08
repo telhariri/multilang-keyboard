@@ -43,6 +43,7 @@ const VK_RWIN: u32 = 0x5C;
 
 static HOOK_HANDLE: AtomicIsize = AtomicIsize::new(0);
 static HOOK_THREAD_ID: AtomicU32 = AtomicU32::new(0);
+static US_KEYBOARD_LAYOUT: OnceLock<isize> = OnceLock::new();
 static STATE: OnceLock<Mutex<HookState>> = OnceLock::new();
 static THREAD: OnceLock<Mutex<Option<JoinHandle<()>>>> = OnceLock::new();
 
@@ -156,6 +157,7 @@ unsafe extern "system" {
 struct HookState {
     physical_units: Vec<String>,
     modifiers: HashSet<u32>,
+    shift_keys: HashSet<u32>,
     suppressed_keys: HashSet<u32>,
     pending: Option<PendingReplacement>,
 }
@@ -324,6 +326,10 @@ unsafe fn process_key_event(message: u32, event: &LowLevelKeyboardEvent) -> bool
         if state.suppressed_keys.remove(&key) {
             return true;
         }
+        if is_shift(key) {
+            state.shift_keys.remove(&key);
+            return false;
+        }
         if is_modifier(key) {
             state.modifiers.remove(&key);
         }
@@ -332,6 +338,10 @@ unsafe fn process_key_event(message: u32, event: &LowLevelKeyboardEvent) -> bool
 
     if state.suppressed_keys.contains(&key) {
         return true;
+    }
+    if is_shift(key) {
+        state.shift_keys.insert(key);
+        return false;
     }
     if is_modifier(key) {
         state.modifiers.insert(key);
@@ -342,10 +352,6 @@ unsafe fn process_key_event(message: u32, event: &LowLevelKeyboardEvent) -> bool
         state.clear_word();
         return false;
     }
-    if matches!(key, VK_SHIFT | VK_LSHIFT | VK_RSHIFT) {
-        return false;
-    }
-
     let hwnd = GetForegroundWindow();
     if key == VK_SPACE {
         return complete_word(&mut state, " ", key, hwnd);
@@ -362,7 +368,28 @@ unsafe fn process_key_event(message: u32, event: &LowLevelKeyboardEvent) -> bool
         return false;
     }
 
-    let translated = translate_key(key, event.scan_code, hwnd);
+    let active_layout = if hwnd == 0 {
+        0
+    } else {
+        GetKeyboardLayout(GetWindowThreadProcessId(hwnd, null_mut()))
+    };
+    let mut translated = translate_key(key, event.scan_code, hwnd, &state.shift_keys);
+    if !state.shift_keys.is_empty() && (active_layout as u16) == 0x0401 {
+        // Arabic 101 maps Shift+letter to Arabic marks and symbols. Use the
+        // physical US key only for detection; the original key still reaches
+        // the foreground app unchanged.
+        let us_layout = *US_KEYBOARD_LAYOUT.get_or_init(|| {
+            let us_name: Vec<u16> = "00000409\0".encode_utf16().collect();
+            LoadKeyboardLayoutW(us_name.as_ptr(), 0)
+        });
+        if us_layout != 0 {
+            let physical =
+                translate_key_with_layout(key, event.scan_code, us_layout, &state.shift_keys);
+            if physical.len() == 1 && physical.as_bytes()[0].is_ascii_alphabetic() {
+                translated = physical;
+            }
+        }
+    }
     if translated.is_empty() {
         state.clear_word();
         return false;
@@ -385,9 +412,16 @@ fn is_modifier(key: u32) -> bool {
     )
 }
 
+fn is_shift(key: u32) -> bool {
+    matches!(key, VK_SHIFT | VK_LSHIFT | VK_RSHIFT)
+}
+
 fn is_word_character(character: char) -> bool {
     character.is_alphanumeric()
-        || matches!(character, '\'' | '’' | '-' | '`' | '[' | ']' | ';' | ',' | '.' | '/')
+        || matches!(
+            character,
+            '\'' | '’' | '-' | '`' | '[' | ']' | ';' | ',' | '.' | '/'
+        )
 }
 
 unsafe fn complete_word(state: &mut HookState, boundary: &str, key: u32, hwnd: isize) -> bool {
@@ -442,13 +476,27 @@ unsafe fn complete_word(state: &mut HookState, boundary: &str, key: u32, hwnd: i
     true
 }
 
-unsafe fn translate_key(key: u32, scan_code: u32, hwnd: isize) -> String {
+unsafe fn translate_key(
+    key: u32,
+    scan_code: u32,
+    hwnd: isize,
+    shift_keys: &HashSet<u32>,
+) -> String {
     let thread_id = if hwnd == 0 {
         0
     } else {
         GetWindowThreadProcessId(hwnd, null_mut())
     };
     let layout = GetKeyboardLayout(thread_id);
+    translate_key_with_layout(key, scan_code, layout, shift_keys)
+}
+
+unsafe fn translate_key_with_layout(
+    key: u32,
+    scan_code: u32,
+    layout: isize,
+    shift_keys: &HashSet<u32>,
+) -> String {
     let mut keyboard_state = [0u8; 256];
     GetKeyboardState(keyboard_state.as_mut_ptr());
     for modifier in [
@@ -465,6 +513,19 @@ unsafe fn translate_key(key: u32, scan_code: u32, hwnd: isize) -> String {
         if GetAsyncKeyState(modifier as i32) < 0 {
             keyboard_state[modifier as usize] |= 0x80;
         }
+    }
+    let shift_is_down = !shift_keys.is_empty();
+    keyboard_state[VK_SHIFT as usize] = if shift_is_down {
+        keyboard_state[VK_SHIFT as usize] | 0x80
+    } else {
+        keyboard_state[VK_SHIFT as usize] & !0x80
+    };
+    for shift_key in [VK_LSHIFT, VK_RSHIFT] {
+        keyboard_state[shift_key as usize] = if shift_keys.contains(&shift_key) {
+            keyboard_state[shift_key as usize] | 0x80
+        } else {
+            keyboard_state[shift_key as usize] & !0x80
+        };
     }
     keyboard_state[key as usize] |= 0x80;
     let mut output = [0u16; 8];
@@ -598,4 +659,20 @@ fn report_status(message: &str) {
     }
     let callback: crate::StatusCallback = unsafe { std::mem::transmute(callback_address) };
     unsafe { callback(message.as_ptr(), message.len()) };
+}
+
+#[cfg(test)]
+mod shift_tests {
+    use super::*;
+
+    #[test]
+    fn tracked_shift_translates_a_us_letter_as_uppercase() {
+        let layout_name: Vec<u16> = "00000409\0".encode_utf16().collect();
+        let layout = unsafe { LoadKeyboardLayoutW(layout_name.as_ptr(), 0) };
+        assert_ne!(layout, 0, "could not load the US keyboard layout");
+
+        let shifted = HashSet::from([VK_LSHIFT]);
+        let translated = unsafe { translate_key_with_layout(0x48, 0x23, layout, &shifted) };
+        assert_eq!(translated, "H");
+    }
 }

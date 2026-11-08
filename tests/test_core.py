@@ -77,6 +77,7 @@ class ConversionTests(unittest.TestCase):
 
     def test_per_word_recognition_corrects_in_both_directions_and_stays_in_language(self):
         self.assertEqual(main.TypingMonitor._recognize("اثممخ"), ("hello", "en"))
+        self.assertEqual(main.TypingMonitor._recognize("Hثممخ"), ("Hello", "en"))
         self.assertEqual(main.TypingMonitor._recognize("hello"), (None, None))
         self.assertEqual(main.TypingMonitor._recognize("hgg,pm"), ("اللوحة", "ar"))
         self.assertEqual(main.TypingMonitor._recognize("اللوحة"), (None, None))
@@ -224,6 +225,59 @@ class ConversionTests(unittest.TestCase):
 
 
 class WindowsInputTests(unittest.TestCase):
+    def test_shift_is_kept_for_key_translation_and_english_case_under_arabic_layout(self):
+        received = []
+        monitor = SimpleNamespace(
+            native_character=received.append,
+            native_backspace=Mock(),
+            finish_native_word=Mock(return_value=False),
+            clear_buffer=Mock(),
+        )
+        hook = WindowsKeyboardHook(monitor)
+
+        class FakeUser32:
+            def GetForegroundWindow(self):
+                return 99
+
+            def GetWindowThreadProcessId(self, _hwnd, _process_id):
+                return 7
+
+            def GetKeyboardLayout(self, _thread_id):
+                return 0x0401
+
+            def GetKeyboardState(self, state):
+                for index in range(256):
+                    state[index] = 0
+                return 1
+
+            def GetAsyncKeyState(self, _key):
+                return 0
+
+            def LoadKeyboardLayoutW(self, _name, _flags):
+                return 0x0409
+
+            def ToUnicodeEx(
+                self, _vk, _scan, state, output, _capacity, _flags, layout
+            ):
+                shifted = bool(state[0x10] & 0x80)
+                if layout == 0x0409:
+                    output[0] = "H" if shifted else "h"
+                else:
+                    output[0] = "َ" if shifted else "ث"
+                return 1
+
+        hook.user32 = FakeUser32()
+        shift = SimpleNamespace(vkCode=0xA0, scanCode=42)
+        letter = SimpleNamespace(vkCode=0x48, scanCode=35)
+
+        self.assertFalse(hook._handle_event(WM_KEYDOWN, shift))
+        self.assertFalse(hook._handle_event(WM_KEYDOWN, letter))
+        self.assertEqual(received, ["H"])
+        self.assertEqual(main.TypingMonitor._recognize("Hثممخ"), ("Hello", "en"))
+        self.assertFalse(hook._handle_event(WM_KEYUP, shift))
+        self.assertFalse(hook._handle_event(WM_KEYDOWN, letter))
+        self.assertEqual(received, ["H", "ث"])
+
     def test_windows_input_union_has_native_size(self):
         expected_size = 40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28
         self.assertEqual(ctypes.sizeof(INPUT), expected_size)

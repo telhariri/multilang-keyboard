@@ -1,0 +1,67 @@
+name: Windows build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Install application and build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-build.txt
+      - name: Run Python tests
+        run: python -m unittest discover -s tests -v
+      - name: Build and test the native Windows hook
+        run: |
+          cargo build --manifest-path native/Cargo.toml
+          cargo test --manifest-path native/Cargo.toml -- --test-threads=1
+      - name: Build the release DLL and desktop application
+        shell: pwsh
+        run: |
+          $env:RUSTFLAGS = "-C target-feature=+crt-static"
+          cargo build --manifest-path native/Cargo.toml --release --target x86_64-pc-windows-msvc
+          Copy-Item native/target/x86_64-pc-windows-msvc/release/multilang_native.dll native/multilang_native.dll
+          python -m PyInstaller --noconfirm --clean multilang.spec
+          $smoke = Start-Process -FilePath "dist/Multilang/Multilang.exe" -ArgumentList "--help" -Wait -PassThru
+          if ($smoke.ExitCode -ne 0) { throw "Packaged application startup check failed: $($smoke.ExitCode)" }
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Build installer and portable package
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME.TrimStart("v") } else { "1.0.0" }
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" windows/installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed: $LASTEXITCODE" }
+          Compress-Archive -Path dist/Multilang/* -DestinationPath Multilang-Windows-x64.zip -CompressionLevel Optimal
+      - name: Upload Windows release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: Multilang-Windows-x64
+          path: |
+            windows/Multilang-Setup.exe
+            Multilang-Windows-x64.zip
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$env:GITHUB_REF_NAME" windows/Multilang-Setup.exe Multilang-Windows-x64.zip --generate-notes
