@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.0.1"
 #endif
 
 [Setup]
@@ -7,9 +7,9 @@ AppId={{A8C72263-9E95-4BF5-8C5A-133B7A8A8D07}
 AppName=Multilang
 AppVersion={#AppVersion}
 AppPublisher=Taha Al-Hariri
-AppPublisherURL=https://github.com/telhariri/multilang-keyboard
-AppSupportURL=https://github.com/telhariri/multilang-keyboard/issues
-AppUpdatesURL=https://github.com/telhariri/multilang-keyboard/releases/latest
+AppPublisherURL=https://github.com/tahaelhariri998/multilang-keyboard
+AppSupportURL=https://github.com/tahaelhariri998/multilang-keyboard/issues
+AppUpdatesURL=https://github.com/tahaelhariri998/multilang-keyboard/releases/latest
 DefaultDirName={localappdata}\Programs\Multilang
 DefaultGroupName=Multilang
 DisableProgramGroupPage=yes

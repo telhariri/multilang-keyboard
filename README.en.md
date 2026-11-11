@@ -15,7 +15,7 @@
   <img alt="Linux" src="https://img.shields.io/badge/Linux-supported-1793D1?style=flat-square&logo=linux&logoColor=white">
   <img alt="Windows supported" src="https://img.shields.io/badge/Windows-supported-0078D6?style=flat-square&logo=windows&logoColor=white">
   <img alt="Local word scoring" src="https://img.shields.io/badge/word%20scoring-local-2E8B57?style=flat-square">
-  <img alt="MIT License" src="https://img.shields.io/github/license/telhariri/multilang-keyboard?style=flat-square">
+  <img alt="MIT License" src="https://img.shields.io/github/license/tahaelhariri998/multilang-keyboard?style=flat-square">
 </p>
 
 ---
@@ -46,7 +46,7 @@ Words are checked individually. After a correction, the selected layout stays in
 |:--|:--|:--|
 | **KDE Plasma on Wayland** | Used and verified on EndeavourOS | Requires the Fcitx5 add-on and works in apps that accept Fcitx input. Some Wayland apps do not expose this input path. |
 | **Linux on X11** | Supported with suitable system settings | Keyboard capture and layout switching depend on the X11 session and available layout tools. |
-| **Windows 10/11 (64-bit)** | Supported | Installer and portable package are available from [the latest release](https://github.com/telhariri/multilang-keyboard/releases/latest). Uses a native Rust keyboard hook and Windows APIs for text input and layout switching. |
+| **Windows 10/11 (64-bit)** | Supported | Installer and portable package are available from [the latest release](https://github.com/tahaelhariri998/multilang-keyboard/releases/latest). Uses a native Rust keyboard hook and Windows APIs for text input and layout switching. |
 | **Wayland outside KDE** | Not currently supported | Wayland isolation prevents global key monitoring; the current Fcitx add-on targets KDE/KWin. |
 
 The app expects **US English** and **Arabic 101** keyboard layouts.
@@ -55,7 +55,7 @@ The app expects **US English** and **Arabic 101** keyboard layouts.
 
 ### Windows 10/11 (64-bit)
 
-Download the [Multilang installer](https://github.com/telhariri/multilang-keyboard/releases/latest/download/Multilang-Setup.exe) or [portable package](https://github.com/telhariri/multilang-keyboard/releases/latest/download/Multilang-Windows-x64.zip) from the releases page. The Windows build does not require Python or Rust. The installer adds a Start Menu shortcut and can create a desktop shortcut. It starts Multilang when you sign in by default; clear that option during setup to disable automatic startup.
+Download the [Multilang installer](https://github.com/tahaelhariri998/multilang-keyboard/releases/latest/download/Multilang-Setup.exe) or [portable package](https://github.com/tahaelhariri998/multilang-keyboard/releases/latest/download/Multilang-Windows-x64.zip) from the releases page. The Windows build does not require Python or Rust. The installer adds a Start Menu shortcut and can create a desktop shortcut. It starts Multilang when you sign in by default; clear that option during setup to disable automatic startup.
 
 Make sure **US English** and **Arabic 101** keyboard layouts are installed in Windows Settings. Multilang runs in the system tray; use its menu to open the window, stop correction, or exit.
 
@@ -66,7 +66,7 @@ Running from source requires Python 3.10 or newer. The first install needs an in
 Clone the project:
 
 ```bash
-git clone https://github.com/telhariri/multilang-keyboard.git
+git clone https://github.com/tahaelhariri998/multilang-keyboard.git
 cd multilang-keyboard
 ```
 
@@ -115,7 +115,7 @@ tests/                         Python tests
 
 ## Support the project and share feedback
 
-If you find Multilang useful, please support this project and similar projects: star the repository, share it with others, or contribute. Feedback, bug reports, and suggestions help me improve the tool. When reporting an issue, include reproduction steps and your operating system in a [new GitHub issue](https://github.com/telhariri/multilang-keyboard/issues).
+If you find Multilang useful, please support this project and similar projects: star the repository, share it with others, or contribute. Feedback, bug reports, and suggestions help me improve the tool. When reporting an issue, include reproduction steps and your operating system in a [new GitHub issue](https://github.com/tahaelhariri998/multilang-keyboard/issues).
 
 ## License
 

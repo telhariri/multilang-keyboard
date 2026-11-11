@@ -54,7 +54,7 @@ pub extern "C" fn multilang_stop() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn multilang_version() -> *const u8 {
-    b"1.0.0\0".as_ptr()
+    b"1.0.1\0".as_ptr()
 }
 
 #[no_mangle]
@@ -87,7 +87,7 @@ mod tests {
     #[test]
     fn native_version_matches_the_release_version() {
         let version = unsafe { std::ffi::CStr::from_ptr(super::multilang_version().cast()) };
-        assert_eq!(version.to_str().unwrap(), "1.0.0");
+        assert_eq!(version.to_str().unwrap(), "1.0.1");
     }
 
     #[cfg(windows)]
