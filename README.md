@@ -7,15 +7,18 @@
 <p align="center">مساعد سطح مكتب للعربية والإنجليزية: يراجع الكلمة عند المسافة، يصحّحها عندما تكون الثقة عالية، ثم يبدّل التخطيط لتكمل الكتابة.</p>
 
 <p align="center">
-  <a href="README.en.md">English</a>
+  <a href="README.en.md">English</a> ·
+  <a href="CHANGELOG.md">سجل التغييرات</a> ·
+  <a href="https://github.com/telhariri/multilang-keyboard/releases/latest">أحدث إصدار</a>
 </p>
 
 <p align="center">
+  <img alt="GitHub Release" src="https://img.shields.io/github/v/release/telhariri/multilang-keyboard?style=flat-square">
   <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white">
   <img alt="Linux" src="https://img.shields.io/badge/Linux-supported-1793D1?style=flat-square&logo=linux&logoColor=white">
   <img alt="Windows supported" src="https://img.shields.io/badge/Windows-supported-0078D6?style=flat-square&logo=windows&logoColor=white">
   <img alt="Local word scoring" src="https://img.shields.io/badge/word%20scoring-local-2E8B57?style=flat-square">
-  <img alt="MIT License" src="https://img.shields.io/github/license/tahaelhariri998/multilang-keyboard?style=flat-square">
+  <img alt="MIT License" src="https://img.shields.io/github/license/telhariri/multilang-keyboard?style=flat-square">
 </p>
 
 ---
@@ -27,7 +30,9 @@
 | كُتبت على التخطيط الخطأ | تصبح |
 |:--|:--|
 | `اثممخ` | `hello` |
+| `قهلاف` | `right` |
 | `sghl` | `سلام` |
+| `Hkh` | `أنا` |
 | `hgg,pm` | `اللوحة` |
 
 تُفحص كل كلمة على حدة. بعد التصحيح، يبقى التخطيط على اللغة الجديدة حتى تظهر كلمة عالية الثقة باللغة المقابلة.
@@ -44,52 +49,60 @@
 
 | البيئة | الحالة | ملاحظات |
 |:--|:--|:--|
-| **KDE Plasma على Wayland** | مستخدم ومتحقق منه على EndeavourOS | يتطلب إضافة Fcitx5؛ يعمل في التطبيقات التي تقبل الإدخال عبر Fcitx. بعض تطبيقات Wayland لا تتيح هذا النوع من الإدخال. |
-| **Linux على X11** | مدعوم مع إعدادات النظام المناسبة | يعتمد اعتراض المفاتيح وتبديل التخطيط على جلسة X11 وأدوات التخطيط المتاحة. |
-| **Windows 10/11 (64 بت)** | مدعوم | يتوفر مثبت وحزمة محمولة من [أحدث إصدار](https://github.com/tahaelhariri998/multilang-keyboard/releases/latest). يستخدم خطاف لوحة مفاتيح أصليًا بـRust وواجهات Windows للإدخال والتبديل. |
-| **Wayland خارج KDE** | غير مدعوم حاليًا | عزل Wayland يمنع مراقبة المفاتيح عالميًا؛ إضافة Fcitx الحالية تستهدف KDE/KWin. |
+| **KDE Plasma على Wayland** | مستخدم ومتحقق منه على EndeavourOS | يعمل عبر وحدة Fcitx5 خلفية مع لغتَيك فقط (`keyboard-us` و`keyboard-ara`) دون إضافة لغة ثالثة. |
+| **Linux على X11** | مدعوم مع إعدادات النظام المناسبة | يعتمد اعتراض المفاتيح وتبديل التخطيط على جلسة X11 و`libX11` / `xkb-switch`. |
+| **Windows 10/11 (64 بت)** | مدعوم | يتوفر مثبت وحزمة محمولة من [أحدث إصدار](https://github.com/telhariri/multilang-keyboard/releases/latest). يستخدم خطاف لوحة مفاتيح أصليًا بـRust وواجهات Windows للإدخال والتبديل. |
+| **Wayland خارج KDE** | غير مدعوم حاليًا | عزل Wayland يمنع مراقبة المفاتيح عالميًا؛ وحدة Fcitx الحالية تستهدف KDE/KWin. |
 
 يفترض التطبيق تخطيطي **US English** و**Arabic 101**.
 
-## التثبيت والتشغيل
+## التنزيل والتثبيت
+
+جميع الحزم الجاهزة وملفات التحقق `SHA256SUMS.txt` متاحة للتحميل المباشر من [صفحة الإصدارات على GitHub](https://github.com/telhariri/multilang-keyboard/releases/latest):
+
+- **Windows 10/11 (مثبّت):** [Multilang-Setup.exe](https://github.com/telhariri/multilang-keyboard/releases/latest/download/Multilang-Setup.exe)
+- **Windows 10/11 (نسخة محمولة):** [Multilang-Windows-x64.zip](https://github.com/telhariri/multilang-keyboard/releases/latest/download/Multilang-Windows-x64.zip)
+- **Linux (حزمة الإصدار مع سكربت التثبيت):** [Multilang-Linux-x64.tar.gz](https://github.com/telhariri/multilang-keyboard/releases/latest/download/Multilang-Linux-x64.tar.gz)
+- **بصمات التحقق:** [SHA256SUMS.txt](https://github.com/telhariri/multilang-keyboard/releases/latest/download/SHA256SUMS.txt)
 
 ### Windows 10/11 (64 بت)
 
-نزّل [مثبّت Multilang](https://github.com/tahaelhariri998/multilang-keyboard/releases/latest/download/Multilang-Setup.exe) أو [الحزمة المحمولة](https://github.com/tahaelhariri998/multilang-keyboard/releases/latest/download/Multilang-Windows-x64.zip) من صفحة الإصدارات. لا يحتاج إصدار Windows إلى تثبيت Python أو Rust. يضيف المثبّت اختصارًا إلى قائمة ابدأ، ويتيح إنشاء اختصار على سطح المكتب. يبدأ التطبيق مع تسجيل الدخول افتراضيًا؛ أزل تحديد الخيار أثناء التثبيت لإيقاف التشغيل التلقائي.
+نزّل [مثبّت Multilang](https://github.com/telhariri/multilang-keyboard/releases/latest/download/Multilang-Setup.exe) أو [الحزمة المحمولة](https://github.com/telhariri/multilang-keyboard/releases/latest/download/Multilang-Windows-x64.zip). لا يحتاج إصدار Windows إلى تثبيت Python أو Rust. يضيف المثبّت اختصارًا إلى قائمة ابدأ، ويتيح إنشاء اختصار على سطح المكتب. يبدأ التطبيق مع تسجيل الدخول افتراضيًا؛ أزل تحديد الخيار أثناء التثبيت لإيقاف التشغيل التلقائي.
 
 تأكد من إضافة تخطيطي **US English** و**Arabic 101** في إعدادات Windows. يعمل التطبيق في شريط النظام؛ افتح قائمته لإظهار النافذة أو إيقاف التصحيح أو الخروج.
 
-### Linux
+### Linux (من حزمة الإصدار الجاهزة)
 
-يتطلب تشغيل نسخة المصدر Python 3.10 أو أحدث. يحتاج التثبيت الأول إلى اتصال بالإنترنت لتنزيل المكتبات وبيانات الكلمات؛ بعد ذلك يعمل التقييم دون اتصال.
-
-استنسخ المشروع:
+نزّل [Multilang-Linux-x64.tar.gz](https://github.com/telhariri/multilang-keyboard/releases/latest/download/Multilang-Linux-x64.tar.gz)، فكّ الضغط، ثم شغّل المثبّت (يدعم Arch/EndeavourOS وDebian/Ubuntu وFedora):
 
 ```bash
-git clone https://github.com/tahaelhariri998/multilang-keyboard.git
-cd multilang-keyboard
+tar -xzf Multilang-Linux-x64.tar.gz
+cd Multilang-Linux-x64
+./scripts/install-linux.sh --autostart
 ```
 
-أنشئ البيئة الافتراضية ثم ثبّت المتطلبات وشغّل التطبيق:
+يُثبّت السكربت التطبيق في `~/.local/share/multilang`، ويضيف الأمر `multilang` واختصار التطبيقات، وإذا كنت على **KDE Plasma Wayland** يبني ويثبّت وحدة Fcitx5 تلقائيًا (يتطلب `sudo` للخطوة الخاصة بـFcitx5). أزل الخيار `--autostart` إذا لم ترغب بالتشغيل التلقائي، أو مرّر `--skip-wayland` لتجاوز إعداد Wayland. للإزالة: `~/.local/share/multilang/scripts/uninstall-linux.sh`.
+
+### Linux (من المصدر للمطورين)
+
+يتطلب تشغيل نسخة المصدر Python 3.10 أو أحدث. يحتاج التثبيت الأول إلى اتصال بالإنترنت لتنزيل المكتبات وبيانات الكلمات؛ بعد ذلك يعمل التقييم دون اتصال:
+
+```bash
+git clone https://github.com/telhariri/multilang-keyboard.git
+cd multilang-keyboard
+./scripts/install-linux.sh
+```
+
+أو للتشغيل اليدوي داخل بيئة افتراضية:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
+# على KDE Plasma Wayland (اختياري بعد التثبيت الأول):
+./scripts/install-wayland-ime.sh
 python main.py
 ```
-
-عند فتح الواجهة اضغط **تشغيل**. سيعمل التطبيق في الخلفية وتظهر أيقونته في شريط النظام؛ من قائمة الأيقونة يمكنك فتح الواجهة أو إيقاف المراقبة أو الخروج.
-
-### KDE Plasma على Wayland
-
-بعد تثبيت متطلبات Python، ثبّت إضافة Fcitx5 وإعداداتها مرة واحدة على Arch Linux أو EndeavourOS:
-
-```bash
-./scripts/install-wayland-ime.sh
-```
-
-يتطلب السكربت كلمة مرور `sudo` لتثبيت الحزم والإضافة. سجّل الخروج ثم ادخل مجددًا إذا لم يتعرف KDE على طريقة الإدخال أو تخطيطي العربية والإنجليزية فورًا. بعد ذلك شغّل `python main.py` واضغط **تشغيل**؛ يفعّل التطبيق Multilang في Fcitx5 تلقائيًا.
 
 ## الخصوصية وطريقة العمل
 
@@ -100,22 +113,34 @@ python main.py
 ## بنية المشروع
 
 ```text
-main.py                       الواجهة، كشف اللغة، والتصحيح
-windows_backend.py            تكامل لوحة المفاتيح في Windows
-rust_backend.py               واجهة مكتبة Rust الاختيارية
-native/                       مصدر مراقب لوحة المفاتيح بـRust
-multilang.spec                إعداد بناء تطبيق Windows
-windows/installer.iss         إعداد مثبت Windows
-.github/workflows/windows.yml بناء Windows واختباره ونشر إصداراته
-wayland/fcitx5/                إضافة Fcitx5 لـKDE Wayland
-wayland_backend.py             خدمة التصحيح المحلية عبر مقبس Unix
-scripts/install-wayland-ime.sh تثبيت إضافة Wayland على Arch وEndeavourOS
-tests/                         اختبارات Python
+main.py                         الواجهة، المراقبة، وإدارة دورة الحياة
+recognizer.py                   تحليل اللغة، حل الغموض، واستبدال التخطيط
+layout_switcher.py              تبديل تخطيط لوحة المفاتيح على Windows وLinux
+windows_backend.py              خطاف لوحة المفاتيح والماوس الاحتياطي في Windows
+rust_backend.py                 واجهة مكتبة Rust الأصلية
+native/                         مصدر مراقب لوحة المفاتيح بـRust
+multilang.spec                  إعداد بناء تطبيق Windows
+windows/installer.iss           إعداد مثبت Windows
+.github/workflows/release.yml   بناء واختبار ونشر إصدارات Windows وLinux
+wayland/fcitx5/                 إضافة Fcitx5 لـKDE Wayland مع اختبارات CTest
+wayland_backend.py              خدمة التصحيح المحلية عبر مقبس Unix
+scripts/install-linux.sh        مثبّت Linux المتكامل
+scripts/install-wayland-ime.sh  تثبيت وحدة Fcitx5 على Arch/Ubuntu/Fedora
+scripts/uninstall-linux.sh      إزالة تثبيت Linux
+scripts/build-linux-release.sh  إنشاء أرشيف إصدار Linux
+tests/                          اختبارات Python الشاملة
 ```
+
+## خيارات سطر الأوامر (CLI)
+
+- `--start-in-background`: بدء المراقبة تلقائيًا وإبقاء التطبيق في شريط النظام.
+- `--debug`: تفعيل سجل تشخيصي على `stderr` دون تسجيل أي كلمة أو حرف يكتبه المستخدم.
+- `--self-test`: التحقق السريع من نماذج `wordfreq` وقواعد التعرف الأساسية.
+- `--version`: عرض رقم الإصدار الحالي.
 
 ## ادعم المشروع وشارك رأيك
 
-إذا وجدت Multilang مفيدًا، أطلب منك دعم هذا المشروع والمشاريع المشابهة: امنح المستودع نجمة، شاركه مع المهتمين، أو ساهم في تطويره. ملاحظاتك وتقارير الأخطاء واقتراحاتك تساعدني على تحسين الأداة؛ أضف خطوات إعادة المشكلة ونظام التشغيل الذي تستخدمه في [مشكلة جديدة على GitHub](https://github.com/tahaelhariri998/multilang-keyboard/issues).
+إذا وجدت Multilang مفيدًا، أطلب منك دعم هذا المشروع والمشاريع المشابهة: امنح المستودع نجمة، شاركه مع المهتمين، أو ساهم في تطويره. ملاحظاتك وتقارير الأخطاء واقتراحاتك تساعدني على تحسين الأداة؛ أضف خطوات إعادة المشكلة ونظام التشغيل الذي تستخدمه في [مشكلة جديدة على GitHub](https://github.com/telhariri/multilang-keyboard/issues).
 
 ## الترخيص
 
@@ -123,11 +148,15 @@ tests/                         اختبارات Python
 
 ## للمساهمين
 
-شغّل اختبارات Python وRust من جذر المشروع:
+شغّل اختبارات Python وRust وC++ (CTest) من جذر المشروع:
 
 ```bash
-python -m unittest discover -s tests
+python -m unittest discover -s tests -v
+python main.py --self-test
 cargo test --manifest-path native/Cargo.toml
+cmake -S wayland/fcitx5 -B build/fcitx5 -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build/fcitx5 --parallel
+ctest --test-dir build/fcitx5 --output-on-failure
 ```
 
-راجع [README.en.md](README.en.md) للنسخة الإنجليزية. تُبنى حزم Windows x64 وتُختبر آليًا على Windows عبر GitHub Actions.
+راجع [README.en.md](README.en.md) للنسخة الإنجليزية. تُبنى حزم Windows وLinux وتُختبر وتُنشر آليًا عبر GitHub Actions.

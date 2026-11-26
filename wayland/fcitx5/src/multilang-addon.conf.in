@@ -1,7 +1,7 @@
 [Addon]
 Name=Multilang
-Category=InputMethod
+Category=Module
 Version=@PROJECT_VERSION@
 Library=multilang
 Type=SharedLibrary
-OnDemand=True
+OnDemand=False

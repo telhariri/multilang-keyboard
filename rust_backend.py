@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import ctypes
+import logging
 import os
+import sys
 from pathlib import Path
 
+logger = logging.getLogger("multilang.rust")
 
 _CORRECTION = ctypes.CFUNCTYPE(
     ctypes.c_int,
@@ -27,10 +30,17 @@ def _library_candidates() -> list[Path]:
         filename = "libmultilang_native.so"
     else:
         filename = "multilang_native"
+
     candidates = []
     configured = os.environ.get("MULTILANG_NATIVE_LIBRARY")
     if configured:
         candidates.append(Path(configured))
+
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(Path(meipass) / "native" / filename)
+        candidates.append(Path(meipass) / filename)
+
     candidates.extend((
         root / "native" / filename,
         root / "native" / "target" / "release" / filename,
@@ -53,6 +63,7 @@ class RustKeyboardHook:
         path = next((candidate for candidate in _library_candidates() if candidate.is_file()), None)
         if path is None:
             raise FileNotFoundError("Rust native library is missing")
+        logger.debug("Loading Rust keyboard hook from %s", path)
         self.library = ctypes.CDLL(str(path))
         try:
             abi_version = self.library.multilang_abi_version
@@ -94,6 +105,7 @@ class RustKeyboardHook:
             target_language[0] = (1 if target == "en" else 2) | 0x100
             return 1
         except Exception as exc:
+            logger.debug("Rust callback error: %s", exc)
             self.monitor.on_status(f"فشل تحليل الكلمة: {exc}")
             return 0
 

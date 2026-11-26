@@ -1,18 +1,24 @@
+use crate::state::{is_word_character, safe_vk_index, HookState, PendingReplacement};
 use crate::{CORRECTION_CALLBACK, STATUS_CALLBACK};
 use std::collections::HashSet;
 use std::mem::{size_of, zeroed};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const WH_KEYBOARD_LL: i32 = 13;
+const WH_MOUSE_LL: i32 = 14;
 const HC_ACTION: i32 = 0;
 const WM_KEYDOWN: u32 = 0x0100;
 const WM_KEYUP: u32 = 0x0101;
 const WM_SYSKEYDOWN: u32 = 0x0104;
 const WM_SYSKEYUP: u32 = 0x0105;
+const WM_LBUTTONDOWN: u32 = 0x0201;
+const WM_RBUTTONDOWN: u32 = 0x0204;
+const WM_MBUTTONDOWN: u32 = 0x0207;
 const WM_QUIT: u32 = 0x0012;
 const WM_INPUTLANGCHANGEREQUEST: u32 = 0x0050;
 const WM_APP_INJECT: u32 = 0x8001;
@@ -22,6 +28,8 @@ const SWITCH_LAYOUT_FLAG: u32 = 0x0100;
 const INPUT_KEYBOARD: u32 = 1;
 const KEYEVENTF_KEYUP: u32 = 0x0002;
 const KEYEVENTF_UNICODE: u32 = 0x0004;
+const PRIMARYLANGID_ARABIC: u16 = 0x0001;
+const PRIMARYLANGID_ENGLISH: u16 = 0x0009;
 
 const VK_BACK: u32 = 0x08;
 const VK_TAB: u32 = 0x09;
@@ -29,9 +37,12 @@ const VK_RETURN: u32 = 0x0D;
 const VK_SHIFT: u32 = 0x10;
 const VK_CONTROL: u32 = 0x11;
 const VK_MENU: u32 = 0x12;
+const VK_CAPITAL: u32 = 0x14;
 const VK_ESCAPE: u32 = 0x1B;
 const VK_SPACE: u32 = 0x20;
 const VK_DELETE: u32 = 0x2E;
+const VK_NUMLOCK: u32 = 0x90;
+const VK_SCROLL: u32 = 0x91;
 const VK_LSHIFT: u32 = 0xA0;
 const VK_RSHIFT: u32 = 0xA1;
 const VK_LCONTROL: u32 = 0xA2;
@@ -42,18 +53,49 @@ const VK_LWIN: u32 = 0x5B;
 const VK_RWIN: u32 = 0x5C;
 
 static HOOK_HANDLE: AtomicIsize = AtomicIsize::new(0);
+static MOUSE_HOOK_HANDLE: AtomicIsize = AtomicIsize::new(0);
 static HOOK_THREAD_ID: AtomicU32 = AtomicU32::new(0);
-static US_KEYBOARD_LAYOUT: OnceLock<isize> = OnceLock::new();
+static US_KEYBOARD_LAYOUT: AtomicIsize = AtomicIsize::new(0);
 static STATE: OnceLock<Mutex<HookState>> = OnceLock::new();
 static THREAD: OnceLock<Mutex<Option<JoinHandle<()>>>> = OnceLock::new();
+static LAYOUT_SENDER: OnceLock<Mutex<Option<mpsc::Sender<LayoutSwitchRequest>>>> = OnceLock::new();
+static LAYOUT_THREAD: OnceLock<Mutex<Option<JoinHandle<()>>>> = OnceLock::new();
 
 type HookProc = Option<unsafe extern "system" fn(i32, usize, isize) -> isize>;
+
+struct LayoutSwitchRequest {
+    hwnd: isize,
+    target_language: u32,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct Point {
     x: i32,
     y: i32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Rect {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct GuiThreadInfo {
+    cb_size: u32,
+    flags: u32,
+    hwnd_active: isize,
+    hwnd_focus: isize,
+    hwnd_capture: isize,
+    hwnd_menu_owner: isize,
+    hwnd_move_size: isize,
+    hwnd_caret: isize,
+    rc_caret: Rect,
 }
 
 #[repr(C)]
@@ -124,7 +166,10 @@ unsafe extern "system" {
     fn DispatchMessageW(message: *const Message) -> isize;
     fn GetAsyncKeyState(key: i32) -> i16;
     fn GetForegroundWindow() -> isize;
+    fn GetGUIThreadInfo(thread_id: u32, info: *mut GuiThreadInfo) -> i32;
+    fn GetKeyState(key: i32) -> i16;
     fn GetKeyboardLayout(thread_id: u32) -> isize;
+    fn GetKeyboardLayoutList(count: i32, list: *mut isize) -> i32;
     fn GetKeyboardState(state: *mut u8) -> i32;
     fn GetMessageW(message: *mut Message, hwnd: isize, min: u32, max: u32) -> i32;
     fn GetWindowThreadProcessId(hwnd: isize, process_id: *mut u32) -> u32;
@@ -153,39 +198,20 @@ unsafe extern "system" {
     fn GetModuleHandleExW(flags: u32, name_or_address: *const u16, module: *mut isize) -> i32;
 }
 
-#[derive(Default)]
-struct HookState {
-    physical_units: Vec<String>,
-    modifiers: HashSet<u32>,
-    shift_keys: HashSet<u32>,
-    suppressed_keys: HashSet<u32>,
-    pending: Option<PendingReplacement>,
-}
-
-struct PendingReplacement {
-    backspaces: usize,
-    text: String,
-    switch_requested: bool,
-    switched: bool,
-    target_language: u32,
-}
-
-impl HookState {
-    fn word(&self) -> String {
-        self.physical_units.concat()
-    }
-
-    fn clear_word(&mut self) {
-        self.physical_units.clear();
-    }
-}
-
 fn state() -> &'static Mutex<HookState> {
     STATE.get_or_init(|| Mutex::new(HookState::default()))
 }
 
 fn thread_slot() -> &'static Mutex<Option<JoinHandle<()>>> {
     THREAD.get_or_init(|| Mutex::new(None))
+}
+
+fn layout_sender_slot() -> &'static Mutex<Option<mpsc::Sender<LayoutSwitchRequest>>> {
+    LAYOUT_SENDER.get_or_init(|| Mutex::new(None))
+}
+
+fn layout_thread_slot() -> &'static Mutex<Option<JoinHandle<()>>> {
+    LAYOUT_THREAD.get_or_init(|| Mutex::new(None))
 }
 
 pub fn start() -> i32 {
@@ -199,21 +225,39 @@ pub fn start() -> i32 {
         return 1;
     }
 
+    let (layout_tx, layout_rx) = mpsc::channel::<LayoutSwitchRequest>();
+    let layout_thread = thread::Builder::new()
+        .name("MultilangLayoutSwitcher".to_owned())
+        .spawn(move || layout_worker(layout_rx));
+    let Ok(layout_thread) = layout_thread else {
+        return -5;
+    };
+
     let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
     let thread = thread::Builder::new()
         .name("MultilangRustKeyboardHook".to_owned())
         .spawn(move || unsafe { hook_thread(ready_sender) });
     let Ok(thread) = thread else {
+        drop(layout_tx);
+        let _ = layout_thread.join();
         return -3;
     };
 
     match ready_receiver.recv_timeout(Duration::from_secs(5)) {
         Ok(0) => {
+            *layout_sender_slot()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(layout_tx);
+            *layout_thread_slot()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(layout_thread);
             *thread_guard = Some(thread);
             0
         }
         Ok(error) => {
             let _ = thread.join();
+            drop(layout_tx);
+            let _ = layout_thread.join();
             error
         }
         Err(_) => {
@@ -222,6 +266,8 @@ pub fn start() -> i32 {
                 unsafe { PostThreadMessageW(thread_id, WM_QUIT, 0, 0) };
             }
             let _ = thread.join();
+            drop(layout_tx);
+            let _ = layout_thread.join();
             -4
         }
     }
@@ -235,31 +281,50 @@ pub fn stop() -> i32 {
         return 0;
     };
     let thread_id = HOOK_THREAD_ID.load(Ordering::Acquire);
-    let posted = if thread_id == 0 {
-        0
-    } else {
-        unsafe { PostThreadMessageW(thread_id, WM_QUIT, 0, 0) }
-    };
-    if posted == 0 {
-        // A failed post normally means the hook thread has already exited.
-        // Join it so its callback pointers can safely be released by Python.
-        if thread.join().is_err() {
-            return -6;
-        }
-        HOOK_THREAD_ID.store(0, Ordering::Release);
-        *state()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = HookState::default();
-        return 0;
+    if thread_id != 0 {
+        unsafe { PostThreadMessageW(thread_id, WM_QUIT, 0, 0) };
     }
-    if thread.join().is_err() {
-        return -6;
+    let join_result = thread.join();
+
+    *layout_sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    if let Some(layout_thread) = layout_thread_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take()
+    {
+        let _ = layout_thread.join();
     }
+
+    HOOK_THREAD_ID.store(0, Ordering::Release);
     *state()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = HookState::default();
-    HOOK_THREAD_ID.store(0, Ordering::Release);
+
+    if join_result.is_err() {
+        return -6;
+    }
     0
+}
+
+fn layout_worker(receiver: mpsc::Receiver<LayoutSwitchRequest>) {
+    while let Ok(request) = receiver.recv() {
+        let switched = unsafe { switch_layout(request.hwnd, request.target_language) };
+        if switched {
+            report_status(if request.target_language == 1 {
+                "تم التصحيح — English"
+            } else {
+                "تم التصحيح — العربية"
+            });
+        } else {
+            report_status(if request.target_language == 1 {
+                "MULTILANG_SWITCH_FAILED:en"
+            } else {
+                "MULTILANG_SWITCH_FAILED:ar"
+            });
+        }
+    }
 }
 
 unsafe fn hook_thread(ready: mpsc::SyncSender<i32>) {
@@ -281,6 +346,10 @@ unsafe fn hook_thread(ready: mpsc::SyncSender<i32>) {
         return;
     }
     HOOK_HANDLE.store(hook, Ordering::Release);
+
+    let mouse_hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), module, 0);
+    MOUSE_HOOK_HANDLE.store(mouse_hook, Ordering::Release);
+
     let _ = ready.send(0);
 
     loop {
@@ -296,19 +365,49 @@ unsafe fn hook_thread(ready: mpsc::SyncSender<i32>) {
         }
     }
 
+    if mouse_hook != 0 {
+        UnhookWindowsHookEx(mouse_hook);
+        MOUSE_HOOK_HANDLE.store(0, Ordering::Release);
+    }
     UnhookWindowsHookEx(hook);
     HOOK_HANDLE.store(0, Ordering::Release);
     HOOK_THREAD_ID.store(0, Ordering::Release);
 }
 
 unsafe extern "system" fn hook_proc(code: i32, w_param: usize, l_param: isize) -> isize {
-    if code == HC_ACTION {
-        let event = &*(l_param as *const LowLevelKeyboardEvent);
-        if event.flags & LLKHF_INJECTED == 0 && process_key_event(w_param as u32, event) {
+    if code == HC_ACTION && l_param != 0 {
+        let suppress = catch_unwind(AssertUnwindSafe(|| {
+            let event = &*(l_param as *const LowLevelKeyboardEvent);
+            (event.flags & LLKHF_INJECTED == 0) && process_key_event(w_param as u32, event)
+        }))
+        .unwrap_or(false);
+        if suppress {
             return 1;
         }
     }
     CallNextHookEx(HOOK_HANDLE.load(Ordering::Acquire), code, w_param, l_param)
+}
+
+unsafe extern "system" fn mouse_hook_proc(code: i32, w_param: usize, l_param: isize) -> isize {
+    if code == HC_ACTION
+        && matches!(
+            w_param as u32,
+            WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN
+        )
+    {
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let mut st = state()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            st.clear_word();
+        }));
+    }
+    CallNextHookEx(
+        MOUSE_HOOK_HANDLE.load(Ordering::Acquire),
+        code,
+        w_param,
+        l_param,
+    )
 }
 
 unsafe fn process_key_event(message: u32, event: &LowLevelKeyboardEvent) -> bool {
@@ -339,6 +438,9 @@ unsafe fn process_key_event(message: u32, event: &LowLevelKeyboardEvent) -> bool
     if state.suppressed_keys.contains(&key) {
         return true;
     }
+    if is_lock_key(key) {
+        return false;
+    }
     if is_shift(key) {
         state.shift_keys.insert(key);
         return false;
@@ -348,16 +450,28 @@ unsafe fn process_key_event(message: u32, event: &LowLevelKeyboardEvent) -> bool
         state.clear_word();
         return false;
     }
+
+    // Reconcile stuck modifier/shift keys in case KEYUP was missed across UAC or Alt+Tab.
+    state
+        .modifiers
+        .retain(|&vk| GetAsyncKeyState(vk as i32) < 0);
+    state
+        .shift_keys
+        .retain(|&vk| GetAsyncKeyState(vk as i32) < 0);
+
     if !state.modifiers.is_empty() {
         state.clear_word();
         return false;
     }
+
     let hwnd = GetForegroundWindow();
+    state.on_hwnd_or_idle(hwnd, Instant::now());
+
     if key == VK_SPACE {
         return complete_word(&mut state, " ", key, hwnd);
     }
     if key == VK_BACK {
-        state.physical_units.pop();
+        state.backspace();
         return false;
     }
     if key == VK_DELETE
@@ -374,14 +488,18 @@ unsafe fn process_key_event(message: u32, event: &LowLevelKeyboardEvent) -> bool
         GetKeyboardLayout(GetWindowThreadProcessId(hwnd, null_mut()))
     };
     let mut translated = translate_key(key, event.scan_code, hwnd, &state.shift_keys);
-    if !state.shift_keys.is_empty() && (active_layout as u16) == 0x0401 {
+    if !state.shift_keys.is_empty() && ((active_layout as u16) & 0x03FF) == PRIMARYLANGID_ARABIC {
         // Arabic 101 maps Shift+letter to Arabic marks and symbols. Use the
         // physical US key only for detection; the original key still reaches
         // the foreground app unchanged.
-        let us_layout = *US_KEYBOARD_LAYOUT.get_or_init(|| {
+        let mut us_layout = US_KEYBOARD_LAYOUT.load(Ordering::Acquire);
+        if us_layout == 0 {
             let us_name: Vec<u16> = "00000409\0".encode_utf16().collect();
-            LoadKeyboardLayoutW(us_name.as_ptr(), 0)
-        });
+            us_layout = LoadKeyboardLayoutW(us_name.as_ptr(), 0);
+            if us_layout != 0 {
+                US_KEYBOARD_LAYOUT.store(us_layout, Ordering::Release);
+            }
+        }
         if us_layout != 0 {
             let physical =
                 translate_key_with_layout(key, event.scan_code, us_layout, &state.shift_keys);
@@ -395,7 +513,7 @@ unsafe fn process_key_event(message: u32, event: &LowLevelKeyboardEvent) -> bool
         return false;
     }
     if translated.chars().all(is_word_character) {
-        state.physical_units.push(translated);
+        state.push_text(&translated);
         return false;
     }
     if translated.chars().count() == 1 {
@@ -416,19 +534,15 @@ fn is_shift(key: u32) -> bool {
     matches!(key, VK_SHIFT | VK_LSHIFT | VK_RSHIFT)
 }
 
-fn is_word_character(character: char) -> bool {
-    character.is_alphanumeric()
-        || matches!(
-            character,
-            '\'' | '’' | '-' | '`' | '[' | ']' | ';' | ',' | '.' | '/'
-        )
+fn is_lock_key(key: u32) -> bool {
+    matches!(key, VK_CAPITAL | VK_NUMLOCK | VK_SCROLL)
 }
 
 unsafe fn complete_word(state: &mut HookState, boundary: &str, key: u32, hwnd: isize) -> bool {
     let word = state.word();
-    let backspaces = state.physical_units.len();
+    let backspaces = state.backspaces();
     state.clear_word();
-    if word.is_empty() {
+    if word.is_empty() || state.pending.is_some() {
         return false;
     }
 
@@ -459,12 +573,13 @@ unsafe fn complete_word(state: &mut HookState, boundary: &str, key: u32, hwnd: i
     };
     replacement.push_str(boundary);
 
-    let switched = switch_requested && switch_layout(hwnd, target_language);
+    // Queue injection and return immediately; layout switching runs asynchronously
+    // on MultilangLayoutSwitcher so WH_KEYBOARD_LL never approaches Windows' hook timeout.
     state.pending = Some(PendingReplacement {
         backspaces,
         text: replacement,
+        hwnd,
         switch_requested,
-        switched,
         target_language,
     });
     if PostThreadMessageW(HOOK_THREAD_ID.load(Ordering::Acquire), WM_APP_INJECT, 0, 0) == 0 {
@@ -514,6 +629,9 @@ unsafe fn translate_key_with_layout(
             keyboard_state[modifier as usize] |= 0x80;
         }
     }
+    if (GetKeyState(VK_CAPITAL as i32) & 1) != 0 {
+        keyboard_state[VK_CAPITAL as usize] |= 0x01;
+    }
     let shift_is_down = !shift_keys.is_empty();
     keyboard_state[VK_SHIFT as usize] = if shift_is_down {
         keyboard_state[VK_SHIFT as usize] | 0x80
@@ -527,7 +645,9 @@ unsafe fn translate_key_with_layout(
             keyboard_state[shift_key as usize] & !0x80
         };
     }
-    keyboard_state[key as usize] |= 0x80;
+    if let Some(index) = safe_vk_index(key) {
+        keyboard_state[index] |= 0x80;
+    }
     let mut output = [0u16; 8];
     let length = ToUnicodeEx(
         key,
@@ -544,6 +664,22 @@ unsafe fn translate_key_with_layout(
     String::from_utf16_lossy(&output[..(length as usize).min(output.len())])
 }
 
+unsafe fn find_installed_layout(target_primary: u16) -> Option<isize> {
+    let count = GetKeyboardLayoutList(0, null_mut());
+    if count <= 0 {
+        return None;
+    }
+    let mut layouts = vec![0isize; count as usize];
+    let actual = GetKeyboardLayoutList(count, layouts.as_mut_ptr());
+    if actual <= 0 {
+        return None;
+    }
+    layouts
+        .into_iter()
+        .take(actual as usize)
+        .find(|&hkl| ((hkl as u16) & 0x03FF) == target_primary)
+}
+
 unsafe fn switch_layout(hwnd: isize, target_language: u32) -> bool {
     if hwnd == 0 {
         return false;
@@ -552,28 +688,50 @@ unsafe fn switch_layout(hwnd: isize, target_language: u32) -> bool {
     if thread_id == 0 {
         return false;
     }
-    let target_language_id = if target_language == 1 { 0x0409 } else { 0x0401 };
-    if (GetKeyboardLayout(thread_id) as u16) == target_language_id {
+    let target_primary = if target_language == 1 {
+        PRIMARYLANGID_ENGLISH
+    } else {
+        PRIMARYLANGID_ARABIC
+    };
+    if ((GetKeyboardLayout(thread_id) as u16) & 0x03FF) == target_primary {
         return true;
     }
 
-    let layout_name: Vec<u16> = if target_language == 1 {
-        "00000409\0".encode_utf16().collect()
-    } else {
-        "00000401\0".encode_utf16().collect()
-    };
-    let layout = LoadKeyboardLayoutW(layout_name.as_ptr(), 0);
+    let layout = find_installed_layout(target_primary).unwrap_or_else(|| {
+        let layout_name: Vec<u16> = if target_language == 1 {
+            "00000409\0".encode_utf16().collect()
+        } else {
+            "00000401\0".encode_utf16().collect()
+        };
+        LoadKeyboardLayoutW(layout_name.as_ptr(), 0)
+    });
     if layout == 0 {
         return false;
     }
-    if PostMessageW(hwnd, WM_INPUTLANGCHANGEREQUEST, 0, layout) == 0 {
+
+    let mut target_hwnd = hwnd;
+    let mut gui: GuiThreadInfo = zeroed();
+    gui.cb_size = size_of::<GuiThreadInfo>() as u32;
+    if GetGUIThreadInfo(thread_id, &mut gui) != 0 && gui.hwnd_focus != 0 {
+        target_hwnd = gui.hwnd_focus;
+    }
+
+    if PostMessageW(target_hwnd, WM_INPUTLANGCHANGEREQUEST, 0, layout) == 0
+        && (target_hwnd == hwnd || PostMessageW(hwnd, WM_INPUTLANGCHANGEREQUEST, 0, layout) == 0)
+    {
         return false;
     }
 
-    let deadline = std::time::Instant::now() + Duration::from_millis(500);
-    while std::time::Instant::now() < deadline {
-        if (GetKeyboardLayout(thread_id) as u16) == target_language_id {
+    let mut posted_fallback = target_hwnd == hwnd;
+    let start = Instant::now();
+    let deadline = start + Duration::from_millis(500);
+    while Instant::now() < deadline {
+        if ((GetKeyboardLayout(thread_id) as u16) & 0x03FF) == target_primary {
             return true;
+        }
+        if !posted_fallback && start.elapsed() >= Duration::from_millis(150) {
+            PostMessageW(hwnd, WM_INPUTLANGCHANGEREQUEST, 0, layout);
+            posted_fallback = true;
         }
         thread::sleep(Duration::from_millis(10));
     }
@@ -594,18 +752,21 @@ unsafe fn send_pending_replacement() {
     let inserted = send_replacement(pending.backspaces, &pending.text);
     if !inserted {
         report_status("فشل إدخال النص المصحح");
-    } else if pending.switched {
-        report_status(if pending.target_language == 1 {
-            "تم التصحيح — English"
-        } else {
-            "تم التصحيح — العربية"
-        });
-    } else if pending.switch_requested {
-        report_status(if pending.target_language == 1 {
-            "MULTILANG_SWITCH_FAILED:en"
-        } else {
-            "MULTILANG_SWITCH_FAILED:ar"
-        });
+        return;
+    }
+    if pending.switch_requested {
+        let sender = layout_sender_slot()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        if let Some(tx) = sender {
+            let _ = tx.send(LayoutSwitchRequest {
+                hwnd: pending.hwnd,
+                target_language: pending.target_language,
+            });
+            return;
+        }
+        report_status("تم تصحيح الكلمة");
     } else {
         report_status("تم تصحيح الكلمة");
     }

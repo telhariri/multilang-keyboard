@@ -1,45 +1,42 @@
+#include "logic.hpp"
+
+#include <fcitx-utils/handlertable.h>
 #include <fcitx-utils/key.h>
 #include <fcitx-utils/keysym.h>
-#include <fcitx-utils/utf8.h>
 #include <fcitx/addonfactory.h>
+#include <fcitx/addoninstance.h>
+#include <fcitx/addonmanager.h>
+#include <fcitx/event.h>
 #include <fcitx/inputcontext.h>
+#include <fcitx/inputcontextmanager.h>
+#include <fcitx/inputcontextproperty.h>
+#include <fcitx/inputmethodgroup.h>
+#include <fcitx/inputmethodmanager.h>
 #include <fcitx/inputpanel.h>
-#include <fcitx/inputmethodengine.h>
+#include <fcitx/instance.h>
 #include <fcitx/text.h>
 
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/un.h>
 #include <unistd.h>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace {
 
-constexpr size_t kMaximumWordBytes = 2048;
-constexpr size_t kMaximumReplyBytes = 4096;
-
-struct Composition {
-    std::string text;
-    std::string language;
-    std::vector<size_t> characterLengths;
-    bool capturing = false;
-    std::unordered_set<uint32_t> consumedKeys;
-};
-
 std::string socketPath() {
     const char *runtime = std::getenv("XDG_RUNTIME_DIR");
-    std::string path = runtime && runtime[0] == '/'
-                           ? std::string(runtime) + "/multilang/correction.sock"
-                           : "/tmp/multilang-" + std::to_string(getuid()) + "/correction.sock";
-    return path;
+    return runtime && runtime[0] == '/'
+               ? std::string(runtime) + "/multilang/correction.sock"
+               : "/tmp/multilang-" + std::to_string(getuid()) + "/correction.sock";
 }
 
 bool writeAll(int fd, const char *data, size_t length) {
@@ -57,255 +54,152 @@ bool writeAll(int fd, const char *data, size_t length) {
     return true;
 }
 
-bool requestService(const std::string &request, std::string &reply) {
-    const std::string path = socketPath();
-    sockaddr_un address{};
-    if (path.size() >= sizeof(address.sun_path)) {
-        return false;
-    }
+class ServiceClient {
+public:
+    ~ServiceClient() { disconnect(); }
 
-    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-    if (fd < 0) {
-        return false;
-    }
-
-    timeval timeout{0, 200000};
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-
-    address.sun_family = AF_UNIX;
-    std::memcpy(address.sun_path, path.c_str(), path.size() + 1);
-    if (connect(fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) != 0) {
-        close(fd);
-        return false;
-    }
-
-    const std::string wire = request + "\n";
-    if (!writeAll(fd, wire.data(), wire.size())) {
-        close(fd);
-        return false;
-    }
-
-    reply.clear();
-    char byte = 0;
-    while (reply.size() < kMaximumReplyBytes) {
-        ssize_t count = recv(fd, &byte, 1, 0);
-        if (count < 0 && errno == EINTR) {
-            continue;
-        }
-        if (count <= 0) {
-            close(fd);
-            return false;
-        }
-        if (byte == '\n') {
-            close(fd);
+    bool serviceReady() {
+        const auto now = std::chrono::steady_clock::now();
+        if (cachedReady_ && now - lastCheck_ < std::chrono::milliseconds(1500)) {
             return true;
         }
-        if (byte == '\r') {
+        if (!cachedReady_ && hasChecked_ && now - lastCheck_ < std::chrono::milliseconds(500)) {
+            return false;
+        }
+        hasChecked_ = true;
+        lastCheck_ = now;
+        const std::string path = socketPath();
+        if (::access(path.c_str(), F_OK) != 0) {
+            disconnect();
+            cachedReady_ = false;
+            return false;
+        }
+        std::string reply;
+        cachedReady_ = request("PING", reply) && reply == "READY";
+        return cachedReady_;
+    }
+
+    bool request(std::string_view payload, std::string &reply) {
+        if (payload.empty() || payload.find('\n') != std::string_view::npos) {
+            return false;
+        }
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            if (!ensureConnected()) {
+                return false;
+            }
+            if (sendAndReadLine(payload, reply)) {
+                return true;
+            }
+            disconnect();
+        }
+        cachedReady_ = false;
+        return false;
+    }
+
+    void markDown() {
+        cachedReady_ = false;
+        hasChecked_ = true;
+        lastCheck_ = std::chrono::steady_clock::now();
+        disconnect();
+    }
+
+private:
+    bool ensureConnected() {
+        if (fd_ >= 0) {
+            return true;
+        }
+        const std::string path = socketPath();
+        sockaddr_un address{};
+        if (path.size() >= sizeof(address.sun_path)) {
+            return false;
+        }
+        int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (fd < 0) {
+            return false;
+        }
+        timeval timeout{0, 150000};
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+        address.sun_family = AF_UNIX;
+        std::memcpy(address.sun_path, path.c_str(), path.size() + 1);
+        if (connect(fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) != 0) {
             close(fd);
             return false;
         }
-        reply.push_back(byte);
-    }
-    close(fd);
-    return false;
-}
-
-bool serviceReady() {
-    std::string reply;
-    return requestService("PING", reply) && reply == "READY";
-}
-
-bool isArabicLetter(char32_t codepoint) {
-    return (codepoint >= 0x0620 && codepoint <= 0x064A) ||
-           (codepoint >= 0x066E && codepoint <= 0x06D3) ||
-           (codepoint >= 0x0750 && codepoint <= 0x077F) ||
-           (codepoint >= 0x08A0 && codepoint <= 0x08FF);
-}
-
-bool isArabicMark(char32_t codepoint) {
-    return (codepoint >= 0x064B && codepoint <= 0x065F) || codepoint == 0x0670;
-}
-
-bool isArabicLayoutSymbol(char32_t codepoint) {
-    // These unshifted US keysyms produce Arabic letters in Arabic PC layouts.
-    return codepoint == U'`' || codepoint == U'[' || codepoint == U']' ||
-           codepoint == U';' || codepoint == U'\'' || codepoint == U',' ||
-           codepoint == U'.' || codepoint == U'/';
-}
-
-bool isWordCharacter(char32_t codepoint) {
-    return (codepoint >= U'a' && codepoint <= U'z') ||
-           (codepoint >= U'A' && codepoint <= U'Z') ||
-           (codepoint >= U'0' && codepoint <= U'9') ||
-           (codepoint >= 0x0660 && codepoint <= 0x0669) ||
-           isArabicLetter(codepoint) || isArabicMark(codepoint) ||
-           isArabicLayoutSymbol(codepoint);
-}
-
-bool isWordJoiner(char32_t codepoint) {
-    return codepoint == U'\'' || codepoint == 0x2019 || codepoint == U'-';
-}
-
-bool isBoundaryCharacter(char32_t codepoint) {
-    return codepoint == U' ' || (codepoint >= 0x21 && codepoint <= 0x2F) ||
-           (codepoint >= 0x3A && codepoint <= 0x40) ||
-           (codepoint >= 0x5B && codepoint <= 0x60) ||
-           (codepoint >= 0x7B && codepoint <= 0x7E) || codepoint == 0x00A0 ||
-           codepoint == 0x060C || codepoint == 0x061B || codepoint == 0x061F;
-}
-
-char32_t firstCodepoint(const std::string &text) {
-    if (text.empty()) {
-        return 0;
-    }
-    const auto *bytes = reinterpret_cast<const unsigned char *>(text.data());
-    if (bytes[0] < 0x80) {
-        return bytes[0];
-    }
-    if ((bytes[0] & 0xE0) == 0xC0 && text.size() >= 2) {
-        return (static_cast<char32_t>(bytes[0] & 0x1F) << 6) |
-               static_cast<char32_t>(bytes[1] & 0x3F);
-    }
-    if ((bytes[0] & 0xF0) == 0xE0 && text.size() >= 3) {
-        return (static_cast<char32_t>(bytes[0] & 0x0F) << 12) |
-               (static_cast<char32_t>(bytes[1] & 0x3F) << 6) |
-               static_cast<char32_t>(bytes[2] & 0x3F);
-    }
-    if ((bytes[0] & 0xF8) == 0xF0 && text.size() >= 4) {
-        return (static_cast<char32_t>(bytes[0] & 0x07) << 18) |
-               (static_cast<char32_t>(bytes[1] & 0x3F) << 12) |
-               (static_cast<char32_t>(bytes[2] & 0x3F) << 6) |
-               static_cast<char32_t>(bytes[3] & 0x3F);
-    }
-    return 0;
-}
-
-char32_t usKeySymbol(uint32_t code, bool shifted) {
-    if (code >= 2 && code <= 11) {
-        static constexpr char normal[] = "1234567890";
-        static constexpr char shift[] = "!@#$%^&*()";
-        return shifted ? shift[code - 2] : normal[code - 2];
-    }
-    if (code >= 16 && code <= 25) {
-        static constexpr char row[] = "qwertyuiop";
-        const auto value = row[code - 16];
-        return shifted ? value - ('a' - 'A') : value;
-    }
-    if (code >= 30 && code <= 38) {
-        static constexpr char row[] = "asdfghjkl";
-        const auto value = row[code - 30];
-        return shifted ? value - ('a' - 'A') : value;
-    }
-    if (code >= 44 && code <= 50) {
-        static constexpr char row[] = "zxcvbnm";
-        const auto value = row[code - 44];
-        return shifted ? value - ('a' - 'A') : value;
-    }
-    switch (code) {
-    case 12: return shifted ? U'_' : U'-';
-    case 13: return shifted ? U'+' : U'=';
-    case 14: return U'\b';
-    case 15: return U'\t';
-    case 26: return shifted ? U'{' : U'[';
-    case 27: return shifted ? U'}' : U']';
-    case 28: return U'\n';
-    case 39: return shifted ? U':' : U';';
-    case 40: return shifted ? U'"' : U'\'';
-    case 41: return shifted ? U'~' : U'`';
-    case 43: return shifted ? U'|' : U'\\';
-    case 51: return shifted ? U'<' : U',';
-    case 52: return shifted ? U'>' : U'.';
-    case 53: return shifted ? U'?' : U'/';
-    case 57: return U' ';
-    default: return 0;
-    }
-}
-
-std::string arabicKeyText(uint32_t code, bool shifted) {
-    if (shifted) {
-        return {};
-    }
-    switch (code) {
-    case 16: return fcitx::utf8::UCS4ToUTF8(U'ض');
-    case 17: return fcitx::utf8::UCS4ToUTF8(U'ص');
-    case 18: return fcitx::utf8::UCS4ToUTF8(U'ث');
-    case 19: return fcitx::utf8::UCS4ToUTF8(U'ق');
-    case 20: return fcitx::utf8::UCS4ToUTF8(U'ف');
-    case 21: return fcitx::utf8::UCS4ToUTF8(U'غ');
-    case 22: return fcitx::utf8::UCS4ToUTF8(U'ع');
-    case 23: return fcitx::utf8::UCS4ToUTF8(U'ه');
-    case 24: return fcitx::utf8::UCS4ToUTF8(U'خ');
-    case 25: return fcitx::utf8::UCS4ToUTF8(U'ح');
-    case 26: return fcitx::utf8::UCS4ToUTF8(U'ج');
-    case 27: return fcitx::utf8::UCS4ToUTF8(U'د');
-    case 30: return fcitx::utf8::UCS4ToUTF8(U'ش');
-    case 31: return fcitx::utf8::UCS4ToUTF8(U'س');
-    case 32: return fcitx::utf8::UCS4ToUTF8(U'ي');
-    case 33: return fcitx::utf8::UCS4ToUTF8(U'ب');
-    case 34: return fcitx::utf8::UCS4ToUTF8(U'ل');
-    case 35: return fcitx::utf8::UCS4ToUTF8(U'ا');
-    case 36: return fcitx::utf8::UCS4ToUTF8(U'ت');
-    case 37: return fcitx::utf8::UCS4ToUTF8(U'ن');
-    case 38: return fcitx::utf8::UCS4ToUTF8(U'م');
-    case 39: return fcitx::utf8::UCS4ToUTF8(U'ك');
-    case 40: return fcitx::utf8::UCS4ToUTF8(U'ط');
-    case 41: return fcitx::utf8::UCS4ToUTF8(U'ذ');
-    case 44: return fcitx::utf8::UCS4ToUTF8(U'ئ');
-    case 45: return fcitx::utf8::UCS4ToUTF8(U'ء');
-    case 46: return fcitx::utf8::UCS4ToUTF8(U'ؤ');
-    case 47: return fcitx::utf8::UCS4ToUTF8(U'ر');
-    case 48: return "لا";
-    case 49: return fcitx::utf8::UCS4ToUTF8(U'ى');
-    case 50: return fcitx::utf8::UCS4ToUTF8(U'ة');
-    case 51: return fcitx::utf8::UCS4ToUTF8(U'و');
-    case 52: return fcitx::utf8::UCS4ToUTF8(U'ز');
-    case 53: return fcitx::utf8::UCS4ToUTF8(U'ظ');
-    default: return {};
-    }
-}
-
-std::string physicalKeyText(uint32_t keycode, bool shifted,
-                            const std::string &language, char32_t observed) {
-    if (!keycode || (language != "en" && language != "ar")) {
-        return {};
+        fd_ = fd;
+        readBuffer_.clear();
+        return true;
     }
 
-    const uint32_t candidates[] = {keycode, keycode >= 8 ? keycode - 8 : keycode};
-    uint32_t selected = keycode;
-    bool found = false;
-    for (uint32_t candidate : candidates) {
-        const char32_t us = usKeySymbol(candidate, shifted);
-        const std::string ar = arabicKeyText(candidate, shifted);
-        const char32_t arabic = firstCodepoint(ar);
-        if (us == observed || arabic == observed ||
-            (ar == "لا" && (observed == 0xFEFB || observed == 0xFEFC))) {
-            selected = candidate;
-            found = true;
-            break;
+    bool sendAndReadLine(std::string_view payload, std::string &reply) {
+        std::string wire;
+        wire.reserve(payload.size() + 1);
+        wire.append(payload);
+        wire.push_back('\n');
+        if (!writeAll(fd_, wire.data(), wire.size())) {
+            return false;
+        }
+
+        reply.clear();
+        while (true) {
+            const size_t newlinePos = readBuffer_.find('\n');
+            if (newlinePos != std::string::npos) {
+                reply = readBuffer_.substr(0, newlinePos);
+                readBuffer_.erase(0, newlinePos + 1);
+                if (!reply.empty() && reply.back() == '\r') {
+                    return false;
+                }
+                return reply.size() <= multilang::kMaximumReplyBytes;
+            }
+            if (readBuffer_.size() > multilang::kMaximumReplyBytes) {
+                return false;
+            }
+            char chunk[512];
+            ssize_t count = recv(fd_, chunk, sizeof(chunk), 0);
+            if (count < 0 && errno == EINTR) {
+                continue;
+            }
+            if (count <= 0) {
+                return false;
+            }
+            readBuffer_.append(chunk, static_cast<size_t>(count));
         }
     }
 
-    if (!found && keycode >= 8 && usKeySymbol(keycode - 8, shifted)) {
-        selected = keycode - 8;
+    void disconnect() {
+        if (fd_ >= 0) {
+            close(fd_);
+            fd_ = -1;
+        }
+        readBuffer_.clear();
     }
-    if (language == "en") {
-        const char32_t symbol = usKeySymbol(selected, shifted);
-        return symbol ? fcitx::utf8::UCS4ToUTF8(symbol) : std::string{};
-    }
-    return arabicKeyText(selected, shifted);
-}
+
+    int fd_ = -1;
+    std::string readBuffer_;
+    bool cachedReady_ = false;
+    bool hasChecked_ = false;
+    std::chrono::steady_clock::time_point lastCheck_{};
+};
+
+class MultilangState : public fcitx::InputContextProperty {
+public:
+    multilang::Composition comp;
+};
 
 uint32_t keyIdentity(const fcitx::KeyEvent &event) {
-    const uint32_t code = event.rawKey().code();
-    return code ? code : static_cast<uint32_t>(event.key().sym());
+    const uint32_t raw = static_cast<uint32_t>(event.rawKey().code());
+    if (raw != 0) {
+        return raw;
+    }
+    const uint32_t orig = static_cast<uint32_t>(event.origKey().code());
+    return orig ? orig : static_cast<uint32_t>(event.key().sym());
 }
 
-void rememberConsumed(Composition &state, const fcitx::KeyEvent &event) {
+void rememberConsumed(multilang::Composition &state, const fcitx::KeyEvent &event) {
     state.consumedKeys.insert(keyIdentity(event));
 }
 
-bool consumeRelease(Composition &state, fcitx::KeyEvent &event) {
+bool consumeRelease(multilang::Composition &state, fcitx::KeyEvent &event) {
     auto found = state.consumedKeys.find(keyIdentity(event));
     if (found == state.consumedKeys.end()) {
         return false;
@@ -315,270 +209,297 @@ bool consumeRelease(Composition &state, fcitx::KeyEvent &event) {
     return true;
 }
 
-void updatePreedit(fcitx::InputContext *context, const Composition &state) {
-    if (state.text.empty()) {
+void updatePreedit(fcitx::InputContext *context, const multilang::Composition &state) {
+    if (state.displayText.empty()) {
         context->inputPanel().reset();
     } else {
-        fcitx::Text preedit(state.text);
-        preedit.setCursor(static_cast<int>(fcitx::utf8::length(state.text)));
+        fcitx::Text preedit(state.displayText);
+        // Fcitx5 Text::setCursor expects a byte offset, not a character count.
+        preedit.setCursor(state.cursorByteOffset());
         context->inputPanel().setClientPreedit(preedit);
     }
     context->updatePreedit();
 }
 
-void commitPending(fcitx::InputContext *context, Composition &state) {
-    if (!state.text.empty()) {
-        context->commitString(state.text);
-    }
-    state.text.clear();
-    state.characterLengths.clear();
-    state.capturing = false;
+void clearComposition(fcitx::InputContext *context, multilang::Composition &state) {
+    state.clear();
     updatePreedit(context, state);
 }
 
-void removeLastUtf8Character(std::string &text) {
-    if (text.empty()) {
-        return;
+void commitPending(fcitx::InputContext *context, multilang::Composition &state) {
+    if (!state.displayText.empty()) {
+        context->commitString(state.displayText);
     }
-    size_t index = text.size() - 1;
-    while (index > 0 && (static_cast<unsigned char>(text[index]) & 0xC0) == 0x80) {
-        --index;
-    }
-    text.erase(index);
+    clearComposition(context, state);
 }
 
 bool hasSensitiveCapability(const fcitx::InputContext *context) {
-    return context->capabilityFlags().testAny(
-        fcitx::CapabilityFlags{fcitx::CapabilityFlag::Password,
-                               fcitx::CapabilityFlag::Sensitive});
+    return context->capabilityFlags().testAny(fcitx::CapabilityFlags{
+        fcitx::CapabilityFlag::Password, fcitx::CapabilityFlag::Sensitive});
 }
 
-class MultilangEngine : public fcitx::InputMethodEngineV2 {
+bool isIgnoredNonCharKey(fcitx::KeySym sym) {
+    return sym == FcitxKey_ISO_Level3_Shift ||
+           sym == FcitxKey_ISO_Level5_Shift ||
+           sym == FcitxKey_ISO_Next_Group ||
+           sym == FcitxKey_ISO_Prev_Group ||
+           sym == FcitxKey_Caps_Lock ||
+           sym == FcitxKey_Num_Lock ||
+           sym == FcitxKey_Scroll_Lock;
+}
+
+class MultilangModule : public fcitx::AddonInstance {
 public:
-    void activate(const fcitx::InputMethodEntry &entry,
-                  fcitx::InputContextEvent &event) override {
-        FCITX_UNUSED(entry);
-        states_[event.inputContext()] = Composition{};
+    explicit MultilangModule(fcitx::Instance *instance) : instance_(instance) {
+        if (!instance_) {
+            return;
+        }
+        instance_->inputContextManager().registerProperty("multilangState", &factory_);
+        connections_.push_back(
+            instance_->watchEvent<fcitx::EventType::InputContextKeyEvent>(
+                fcitx::EventWatcherPhase::PreInputMethod,
+                [this](fcitx::KeyEvent &event) { onKeyEvent(event); }));
+        connections_.push_back(
+            instance_->watchEvent<fcitx::EventType::InputContextReset>(
+                fcitx::EventWatcherPhase::PreInputMethod,
+                [this](fcitx::ResetEvent &event) { onReset(event); }));
+        connections_.push_back(
+            instance_->watchEvent<fcitx::EventType::InputContextFocusOut>(
+                fcitx::EventWatcherPhase::PreInputMethod,
+                [this](fcitx::FocusOutEvent &event) { onFocusOut(event); }));
+        connections_.push_back(
+            instance_->watchEvent<fcitx::EventType::InputContextSwitchInputMethod>(
+                fcitx::EventWatcherPhase::PreInputMethod,
+                [this](fcitx::InputContextSwitchInputMethodEvent &event) {
+                    onSwitchInputMethod(event);
+                }));
     }
 
-    void deactivate(const fcitx::InputMethodEntry &entry,
-                    fcitx::InputContextEvent &event) override {
-        FCITX_UNUSED(entry);
+private:
+    multilang::Composition &contextState(fcitx::InputContext *context) {
+        return context->propertyFor(&factory_)->comp;
+    }
+
+    void onReset(fcitx::ResetEvent &event) {
         auto *context = event.inputContext();
-        auto found = states_.find(context);
-        if (found != states_.end()) {
-            commitPending(context, found->second);
-            states_.erase(found);
+        auto &state = contextState(context);
+        if (!state.capturing && state.displayText.empty()) {
+            return;
+        }
+        if (context->capabilityFlags().test(fcitx::CapabilityFlag::ClientUnfocusCommit)) {
+            clearComposition(context, state);
+        } else {
+            commitPending(context, state);
         }
     }
 
-    void reset(const fcitx::InputMethodEntry &entry,
-               fcitx::InputContextEvent &event) override {
-        FCITX_UNUSED(entry);
+    void onFocusOut(fcitx::FocusOutEvent &event) {
         auto *context = event.inputContext();
-        auto found = states_.find(context);
-        if (found != states_.end()) {
-            commitPending(context, found->second);
+        auto &state = contextState(context);
+        if (!state.capturing && state.displayText.empty()) {
+            return;
+        }
+        if (context->capabilityFlags().test(fcitx::CapabilityFlag::ClientUnfocusCommit)) {
+            clearComposition(context, state);
+        } else {
+            commitPending(context, state);
         }
     }
 
-    void keyEvent(const fcitx::InputMethodEntry &entry,
-                  fcitx::KeyEvent &event) override {
-        FCITX_UNUSED(entry);
+    void onSwitchInputMethod(fcitx::InputContextSwitchInputMethodEvent &event) {
         auto *context = event.inputContext();
-        auto &state = states_[context];
+        auto &state = contextState(context);
+        if (state.capturing || !state.displayText.empty()) {
+            commitPending(context, state);
+        }
+    }
+
+    void onKeyEvent(fcitx::KeyEvent &event) {
+        if (event.filtered()) {
+            return;
+        }
+        auto *context = event.inputContext();
+        if (!context || !instance_) {
+            return;
+        }
+        auto &state = contextState(context);
 
         if (event.isRelease()) {
             consumeRelease(state, event);
             return;
         }
 
-        if (hasSensitiveCapability(context)) {
+        const std::string activeIm = instance_->inputMethod(context);
+        const std::string_view activeLang = multilang::keyboardImLanguage(activeIm);
+        if (activeLang.empty()) {
             if (state.capturing) {
                 commitPending(context, state);
             }
             return;
         }
 
-        const auto &key = event.key();
-        if (key.isModifier() || key.sym() == FcitxKey_ISO_Level3_Shift ||
-            key.sym() == FcitxKey_ISO_Level5_Shift) {
-            if (key.sym() == FcitxKey_Alt_L || key.sym() == FcitxKey_Alt_R) {
-                state.language.clear();
-            }
-            return;
-        }
-
-        if (key.states().testAny(
-                fcitx::KeyStates{fcitx::KeyState::Ctrl, fcitx::KeyState::Alt,
-                                 fcitx::KeyState::Super})) {
+        if (hasSensitiveCapability(context) ||
+            !context->capabilityFlags().test(fcitx::CapabilityFlag::Preedit)) {
             if (state.capturing) {
                 commitPending(context, state);
             }
-            state.language.clear();
             return;
         }
 
-        if (key.check(FcitxKey_BackSpace)) {
-            if (!state.capturing) {
-                return;
+        // Read the unnormalized active-layout key (preserving Shift, CapsLock, AltGr)
+        // while letting modifiers and non-word keys flow straight to Fcitx5 untouched.
+        const fcitx::Key srcKey = event.rawKey().isValid() ? event.rawKey() : event.origKey();
+        if (srcKey.isModifier() || event.key().isModifier() ||
+            isIgnoredNonCharKey(srcKey.sym()) ||
+            isIgnoredNonCharKey(event.key().sym())) {
+            return;
+        }
+
+        if (srcKey.states().testAny(fcitx::KeyStates{
+                fcitx::KeyState::Ctrl, fcitx::KeyState::Alt,
+                fcitx::KeyState::Super, fcitx::KeyState::Super2,
+                fcitx::KeyState::Hyper, fcitx::KeyState::Hyper2,
+                fcitx::KeyState::Meta})) {
+            if (state.capturing) {
+                commitPending(context, state);
             }
-            if (state.text.empty()) {
+            return;
+        }
+
+        if (srcKey.sym() == FcitxKey_BackSpace || event.key().check(FcitxKey_BackSpace)) {
+            if (!state.capturing || state.displayText.empty()) {
                 state.capturing = false;
-                state.characterLengths.clear();
-                updatePreedit(context, state);
                 return;
             }
-            size_t removeCount = 1;
-            if (!state.characterLengths.empty()) {
-                removeCount = state.characterLengths.back();
-                state.characterLengths.pop_back();
-            }
-            for (size_t index = 0; index < removeCount; ++index) {
-                removeLastUtf8Character(state.text);
-            }
+            state.backspace();
             updatePreedit(context, state);
             rememberConsumed(state, event);
             event.filterAndAccept();
             return;
         }
 
-        const char32_t observed = fcitx::Key::keySymToUnicode(key.sym());
-        const auto originalKey = event.origKey();
-        const auto rawKey = event.rawKey();
-        const bool hasOriginalCode = originalKey.code() != 0;
-        const uint32_t physicalCode = hasOriginalCode
-                                          ? static_cast<uint32_t>(originalKey.code())
-                                          : static_cast<uint32_t>(rawKey.code());
-        const char32_t physicalSymbol = hasOriginalCode
-                                            ? fcitx::Key::keySymToUnicode(originalKey.sym())
-                                            : fcitx::Key::keySymToUnicode(rawKey.sym());
-        if (!state.capturing && isWordCharacter(observed)) {
-            if (!serviceReady()) {
-                return;
-            }
-            if (state.language.empty()) {
-                std::string currentLanguage;
-                if (requestService("LANG", currentLanguage)) {
-                    constexpr std::string_view prefix = "LANG\t";
-                    if (currentLanguage.rfind(prefix, 0) == 0) {
-                        currentLanguage.erase(0, prefix.size());
-                    }
-                    if (currentLanguage == "en") {
-                        state.language = "en";
-                    } else if (currentLanguage == "ar") {
-                        state.language = "ar";
-                    }
-                }
-            }
-        }
-        const bool shifted = key.states().testAny(
-            fcitx::KeyStates{fcitx::KeyState::Shift});
-        const std::string mappedText = physicalKeyText(
-            physicalCode, shifted, state.language,
-            physicalSymbol ? physicalSymbol : observed);
-        const char32_t codepoint = mappedText.empty()
-                                       ? observed
-                                       : firstCodepoint(mappedText);
-        if (codepoint < 0x20 || codepoint == 0x7F) {
+        const char32_t observed = fcitx::Key::keySymToUnicode(srcKey.sym());
+        if (observed < 0x20 || observed == 0x7F) {
             if (state.capturing) {
                 commitPending(context, state);
             }
             return;
         }
 
-        // Some Arabic letters sit on punctuation keys in the US layout.
-        // Keep those keys in the candidate so a word such as "hgg,pm" is
-        // scored as one Arabic-layout word; ordinary punctuation is still
-        // committed unchanged when the confidence check rejects it.
-        const bool wordCharacter = isWordCharacter(codepoint);
-        const bool joiner = isWordJoiner(codepoint) && !state.text.empty();
-        if (!state.capturing && !wordCharacter) {
+        // Never trap digits inside preedit; flush any active word and let digits pass through.
+        if (multilang::isDigit(observed)) {
+            if (state.capturing) {
+                commitPending(context, state);
+            }
             return;
         }
 
-        if (state.capturing && !wordCharacter && !joiner &&
-            !isBoundaryCharacter(codepoint)) {
-            commitPending(context, state);
+        const bool shifted = srcKey.states().test(fcitx::KeyState::Shift);
+        const bool altGr = srcKey.states().test(fcitx::KeyState::Mod5);
+        const uint32_t physicalCode = static_cast<uint32_t>(
+            srcKey.code() ? srcKey.code() : event.origKey().code());
+        const char shiftedUpper =
+            activeLang == "ar"
+                ? multilang::shiftedPhysicalUsLetter(
+                      observed, physicalCode, shifted, altGr, state.displayText.empty())
+                : 0;
+
+        const bool wordChar = multilang::isWordCharacter(observed);
+        const bool joiner = multilang::isWordJoiner(observed) && !state.displayText.empty();
+        const bool starter = shiftedUpper != 0;
+
+        if (!state.capturing && !wordChar && !starter) {
             return;
         }
 
         if (!state.capturing) {
+            if (!client_.serviceReady()) {
+                return;
+            }
             state.capturing = true;
         }
 
-        if (wordCharacter || joiner) {
-            const std::string character = mappedText.empty()
-                                              ? fcitx::utf8::UCS4ToUTF8(codepoint)
-                                              : mappedText;
-            if (character.empty() || state.text.size() + character.size() > kMaximumWordBytes) {
+        if (wordChar || joiner || starter) {
+            const std::string displayChar = multilang::ucs4ToUtf8(observed);
+            const std::string detectChar =
+                starter ? std::string(1, shiftedUpper) : displayChar;
+            if (displayChar.empty() || detectChar.empty() ||
+                state.displayText.size() + displayChar.size() > multilang::kMaximumWordBytes ||
+                state.detectText.size() + detectChar.size() > multilang::kMaximumWordBytes) {
                 commitPending(context, state);
                 return;
             }
-            state.text += character;
-            state.characterLengths.push_back(fcitx::utf8::length(character));
+            state.append(displayChar, detectChar);
             updatePreedit(context, state);
             rememberConsumed(state, event);
             event.filterAndAccept();
             return;
         }
 
-        const std::string boundary = mappedText.empty()
-                                         ? fcitx::utf8::UCS4ToUTF8(codepoint)
-                                         : mappedText;
-        finishWord(context, state, boundary);
-        rememberConsumed(state, event);
-        event.filterAndAccept();
+        if (multilang::isBoundaryCharacter(observed)) {
+            const std::string boundary = multilang::ucs4ToUtf8(observed);
+            finishWord(context, state, boundary, activeIm);
+            rememberConsumed(state, event);
+            event.filterAndAccept();
+            return;
+        }
+
+        commitPending(context, state);
     }
 
-private:
-    void finishWord(fcitx::InputContext *context, Composition &state,
-                    const std::string &boundary) {
-        std::string response;
+    void finishWord(fcitx::InputContext *context, multilang::Composition &state,
+                    const std::string &boundary, const std::string &activeIm) {
         std::string replacement;
-        std::string language;
+        std::string targetLanguage;
         bool fixed = false;
 
-        if (!state.text.empty() && requestService("WORD\t" + state.text, response)) {
-            if (response.rfind("FIX\t", 0) == 0) {
-                const size_t languageEnd = response.find('\t', 4);
-                const size_t switchedEnd = languageEnd == std::string::npos
-                                               ? std::string::npos
-                                               : response.find('\t', languageEnd + 1);
-                if (languageEnd != std::string::npos && switchedEnd != std::string::npos) {
-                    language = response.substr(4, languageEnd - 4);
-                    const std::string switched =
-                        response.substr(languageEnd + 1, switchedEnd - languageEnd - 1);
-                    replacement = response.substr(switchedEnd + 1);
-                    fixed = (language == "en" || language == "ar") &&
-                            (switched == "0" || switched == "1" || switched == "?") &&
-                            !replacement.empty();
-                    if (fixed) {
-                        state.language = language;
-                    }
+        if (multilang::utf8CharCount(state.detectText) >= 2) {
+            std::string response;
+            if (client_.request("WORD\t" + state.detectText, response)) {
+                if (auto parsed = multilang::parseFixResponse(response)) {
+                    replacement = std::move(parsed->replacement);
+                    targetLanguage = std::move(parsed->language);
+                    fixed = true;
                 }
+            } else {
+                client_.markDown();
             }
         }
 
-        context->inputPanel().reset();
-        context->updatePreedit();
-        context->commitString((fixed ? replacement : state.text) + boundary);
-        state.text.clear();
-        state.characterLengths.clear();
-        state.capturing = false;
+        const std::string committed = (fixed ? replacement : state.displayText) + boundary;
+        clearComposition(context, state);
+        context->commitString(committed);
+
+        if (fixed && instance_) {
+            std::vector<std::string> ims;
+            const auto &groupItems =
+                instance_->inputMethodManager().currentGroup().inputMethodList();
+            ims.reserve(groupItems.size());
+            for (const auto &item : groupItems) {
+                ims.push_back(item.name());
+            }
+            const std::string targetIm =
+                multilang::findTargetKeyboardIm(ims, targetLanguage);
+            if (!targetIm.empty() && targetIm != activeIm) {
+                instance_->setCurrentInputMethod(context, targetIm, false);
+            }
+        }
     }
 
-    std::unordered_map<fcitx::InputContext *, Composition> states_;
+    fcitx::Instance *instance_;
+    fcitx::FactoryFor<MultilangState> factory_{
+        [](fcitx::InputContext &) { return new MultilangState; }};
+    std::vector<std::unique_ptr<fcitx::HandlerTableEntry<fcitx::EventHandler>>> connections_;
+    ServiceClient client_;
 };
 
-class MultilangEngineFactory : public fcitx::AddonFactory {
+class MultilangModuleFactory : public fcitx::AddonFactory {
 public:
     fcitx::AddonInstance *create(fcitx::AddonManager *manager) override {
-        FCITX_UNUSED(manager);
-        return new MultilangEngine;
+        return new MultilangModule(manager ? manager->instance() : nullptr);
     }
 };
 
 } // namespace
 
-FCITX_ADDON_FACTORY(MultilangEngineFactory);
+FCITX_ADDON_FACTORY(MultilangModuleFactory);

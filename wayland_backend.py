@@ -1,4 +1,4 @@
-"""Private, same-user IPC used by the Fcitx5 Wayland input method."""
+"""Private, same-user IPC used by the Fcitx5 Wayland input method and instance control."""
 
 from __future__ import annotations
 
@@ -11,96 +11,122 @@ import threading
 from pathlib import Path
 
 
-def socket_path() -> Path:
+def socket_path(name: str = "correction.sock") -> Path:
     runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
     if runtime_dir and os.path.isabs(runtime_dir):
         directory = Path(runtime_dir) / "multilang"
     else:
         uid = getattr(os, "getuid", lambda: os.getpid())()
         directory = Path("/tmp") / f"multilang-{uid}"
-    return directory / "correction.sock"
+    return directory / name
 
 
-def show_running_instance() -> bool:
-    """Ask an existing Wayland instance to show its window, if one is active."""
+def show_running_instance(name: str | None = None) -> bool:
+    """Ask an existing Multilang Linux instance to show its window, if one is active."""
     if not hasattr(socket, "AF_UNIX"):
         return False
-    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        client.settimeout(0.5)
-        client.connect(str(socket_path()))
-        client.sendall(b"SHOW\n")
-        return client.recv(64) == b"SHOWN\n"
-    except OSError:
-        return False
-    finally:
-        client.close()
+    names = (name,) if name else ("correction.sock", "instance.sock")
+    for sock_name in names:
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            client.settimeout(0.5)
+            client.connect(str(socket_path(sock_name)))
+            client.sendall(b"SHOW\n")
+            if client.recv(64) == b"SHOWN\n":
+                return True
+        except OSError:
+            continue
+        finally:
+            client.close()
+    return False
 
 
 class _RequestHandler(socketserver.StreamRequestHandler):
+    def setup(self):
+        self.request.settimeout(2.0)
+        super().setup()
+
     def handle(self):
         monitor = self.server.monitor
-        while True:
-            line = self.rfile.readline(8193)
-            if not line:
-                return
-            if len(line) > 8192 or not line.endswith(b"\n"):
-                self.wfile.write(b"ERR\n")
-                return
-            try:
-                request = line.decode("utf-8").rstrip("\n")
-            except UnicodeDecodeError:
-                self.wfile.write(b"ERR\n")
-                continue
-
-            if request == "PING":
-                response = b"READY\n" if monitor.enabled else b"STOPPED\n"
-            elif request == "SHOW":
-                show_window = getattr(monitor, "show_window", None)
-                if show_window is None:
-                    response = b"ERR\n"
-                else:
-                    try:
-                        show_window()
-                        response = b"SHOWN\n"
-                    except Exception:
-                        response = b"ERR\n"
-            elif request == "LANG":
+        try:
+            while True:
                 try:
-                    language = monitor.current_wayland_language()
-                except Exception:
-                    language = None
-                response = (
-                    f"LANG\t{language}\n".encode("ascii")
-                    if language in ("en", "ar") else b"NONE\n"
-                )
-            elif request.startswith("WORD\t"):
-                word = request[5:]
-                if len(word.encode("utf-8")) > 2048 or not word:
+                    line = self.rfile.readline(8193)
+                except (TimeoutError, OSError):
+                    return
+                if not line:
+                    return
+                if len(line) > 8192 or not line.endswith(b"\n"):
+                    self.wfile.write(b"ERR\n")
+                    self.wfile.flush()
+                    return
+                try:
+                    request = line.decode("utf-8").rstrip("\n")
+                except UnicodeDecodeError:
                     self.wfile.write(b"ERR\n")
                     self.wfile.flush()
                     continue
-                try:
-                    result = monitor.correct_wayland_word(word)
-                except Exception:
-                    result = None
-                if result is None:
-                    response = b"NONE\n"
-                else:
-                    replacement, language, switched = result
-                    # Replacements produced by the Arabic/English converter never
-                    # contain tabs or line breaks; validate the wire format anyway.
-                    if any(char in replacement for char in "\t\r\n"):
+
+                if request == "PING":
+                    response = b"READY\n" if monitor.enabled else b"STOPPED\n"
+                elif request == "STATE":
+                    if not monitor.enabled:
+                        response = b"STOPPED\n"
+                    else:
+                        try:
+                            language = monitor.current_wayland_language()
+                        except Exception:
+                            language = None
+                        tag = language if language in ("en", "ar") else "?"
+                        response = f"READY\t{tag}\n".encode("ascii")
+                elif request == "SHOW":
+                    show_window = getattr(monitor, "show_window", None)
+                    if show_window is None:
                         response = b"ERR\n"
                     else:
-                        switch_state = "?" if switched is None else str(int(switched))
-                        response = (
-                            f"FIX\t{language}\t{switch_state}\t{replacement}\n"
-                        ).encode("utf-8")
-            else:
-                response = b"ERR\n"
-            self.wfile.write(response)
-            self.wfile.flush()
+                        try:
+                            show_window()
+                            response = b"SHOWN\n"
+                        except Exception:
+                            response = b"ERR\n"
+                elif request == "LANG":
+                    try:
+                        language = monitor.current_wayland_language()
+                    except Exception:
+                        language = None
+                    response = (
+                        f"LANG\t{language}\n".encode("ascii")
+                        if language in ("en", "ar") else b"NONE\n"
+                    )
+                elif request.startswith("WORD\t"):
+                    word = request[5:]
+                    if len(word.encode("utf-8")) > 2048 or not word:
+                        self.wfile.write(b"ERR\n")
+                        self.wfile.flush()
+                        continue
+                    try:
+                        result = monitor.correct_wayland_word(word)
+                    except Exception:
+                        result = None
+                    if result is None:
+                        response = b"NONE\n"
+                    else:
+                        replacement, language, switched = result
+                        # Replacements produced by the Arabic/English converter never
+                        # contain tabs or line breaks; validate the wire format anyway.
+                        if any(char in replacement for char in "\t\r\n"):
+                            response = b"ERR\n"
+                        else:
+                            switch_state = "?" if switched is None else str(int(switched))
+                            response = (
+                                f"FIX\t{language}\t{switch_state}\t{replacement}\n"
+                            ).encode("utf-8")
+                else:
+                    response = b"ERR\n"
+                self.wfile.write(response)
+                self.wfile.flush()
+        except OSError:
+            return
 
 
 if hasattr(socketserver, "ThreadingUnixStreamServer"):
@@ -112,11 +138,11 @@ else:
 
 
 class WaylandCorrectionServer:
-    """Expose only word correction through a user-owned Unix domain socket."""
+    """Expose local same-user word correction and control through a Unix domain socket."""
 
-    def __init__(self, monitor):
+    def __init__(self, monitor, socket_name: str = "correction.sock"):
         self.monitor = monitor
-        self.path = socket_path()
+        self.path = socket_path(socket_name)
         self.server = None
         self.thread = None
         self._socket_identity = None

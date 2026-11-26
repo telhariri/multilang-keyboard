@@ -1,5 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+pub mod state;
+
 pub type CorrectionCallback = unsafe extern "C" fn(
     word: *const u8,
     word_len: usize,
@@ -42,19 +44,18 @@ pub extern "C" fn multilang_start(
 #[no_mangle]
 pub extern "C" fn multilang_stop() -> i32 {
     #[cfg(windows)]
-    {
-        return windows::stop();
-    }
-
+    let result = windows::stop();
     #[cfg(not(windows))]
-    {
-        0
-    }
+    let result = 0;
+
+    CORRECTION_CALLBACK.store(0, Ordering::Release);
+    STATUS_CALLBACK.store(0, Ordering::Release);
+    result
 }
 
 #[no_mangle]
 pub extern "C" fn multilang_version() -> *const u8 {
-    b"1.0.1\0".as_ptr()
+    b"1.1.0\0".as_ptr()
 }
 
 #[no_mangle]
@@ -71,15 +72,6 @@ mod tests {
     use super::{CorrectionCallback, StatusCallback};
 
     #[test]
-    fn replacement_encodes_as_utf16_code_units() {
-        let units: Vec<u16> = "hello 😀 ".encode_utf16().collect();
-        assert_eq!(units.len(), 9);
-        assert_eq!(units[6], 0xD83D);
-        assert_eq!(units[7], 0xDE00);
-        assert_eq!(units[8], b' ' as u16);
-    }
-
-    #[test]
     fn native_abi_version_matches_python_bridge() {
         assert_eq!(super::multilang_abi_version(), 2);
     }
@@ -87,7 +79,7 @@ mod tests {
     #[test]
     fn native_version_matches_the_release_version() {
         let version = unsafe { std::ffi::CStr::from_ptr(super::multilang_version().cast()) };
-        assert_eq!(version.to_str().unwrap(), "1.0.1");
+        assert_eq!(version.to_str().unwrap(), "1.1.0");
     }
 
     #[cfg(windows)]

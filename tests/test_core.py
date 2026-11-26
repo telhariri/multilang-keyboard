@@ -1,6 +1,7 @@
 import ctypes
 import os
 import socket
+import socketserver
 import stat
 import tempfile
 import threading
@@ -8,6 +9,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import layout_switcher
 import main
 from rust_backend import RustKeyboardHook
 from windows_backend import (
@@ -168,60 +170,33 @@ class ConversionTests(unittest.TestCase):
             self.assertFalse(main.LayoutSwitcher._switch_kde("ar"))
         self.assertEqual(dbus_call.call_count, 1)
 
-    def test_kde_wayland_requires_fcitx_sync_even_when_kwin_already_matches(self):
-        layouts = "([('ara', '', 'Arabic'), ('us', '', 'English (US)')],)"
-        with patch.object(main.shutil, "which", return_value="/usr/bin/gdbus"), patch.object(
-            main.subprocess, "check_output", side_effect=[layouts, "(uint32 1,)"]
-        ), patch.object(main.LayoutSwitcher, "_sync_fcitx_wayland_layout", return_value=False) as sync, patch.dict(
-            os.environ, {"XDG_SESSION_TYPE": "wayland"}
-        ):
-            self.assertFalse(main.LayoutSwitcher._switch_kde("en"))
-        sync.assert_called_once_with("en")
-
-    def test_kde_reports_the_current_language_from_kwin(self):
-        layouts = "([('ara', '', 'Arabic'), ('us', '', 'English (US)')],)"
-        with patch.object(main.shutil, "which", return_value="/usr/bin/gdbus"), patch.object(
-            main.subprocess, "check_output", side_effect=[layouts, "(uint32 1,)"]
-        ):
-            self.assertEqual(main.LayoutSwitcher.current_kde_language(), "en")
-
-    def test_fcitx_wayland_layout_refresh_preserves_items_and_reactivates_multilang(self):
-        methods = []
-        group_info = "('sy', [('keyboard-sy', ''), ('keyboard-us', ''), ('multilang', '')])"
-        verified_group_info = "('us', [('keyboard-sy', ''), ('keyboard-us', ''), ('multilang', '')])"
-        info_calls = 0
+    def test_kde_wayland_switches_via_fcitx_without_reloading_fcitx(self):
+        group_info = "('us', [('keyboard-us', ''), ('keyboard-ara', '')])"
 
         def check_output(args, **_kwargs):
-            nonlocal info_calls
-            if args[0] == "/usr/bin/gdbus":
-                method = args[args.index("--method") + 1]
-                methods.append(method)
-            else:
-                method = None
-            if method == "org.fcitx.Fcitx.Controller1.CurrentInputMethodGroup":
+            if "CurrentInputMethodGroup" in args[-1]:
                 return "('Default',)"
-            if method == "org.fcitx.Fcitx.Controller1.InputMethodGroupInfo":
-                info_calls += 1
-                return group_info if info_calls == 1 else verified_group_info
-            if method == "org.fcitx.Fcitx.Controller1.SetInputMethodGroupInfo":
-                self.assertEqual(args[-3], "Default")
-                self.assertEqual(args[-2], "us")
-                self.assertIn("('keyboard-sy', '')", args[-1])
-                self.assertIn("('multilang', '')", args[-1])
-                return "()"
-            if args[0] == "/usr/bin/fcitx5-remote" and args[-1] == "-n":
-                return "multilang\n"
+            if "InputMethodGroupInfo" in args[-2]:
+                return group_info
+            if args[-1] == "-n":
+                return "keyboard-us\n"
             raise AssertionError(args)
 
         with patch.object(main.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}"), patch.object(
             main.subprocess, "check_output", side_effect=check_output
-        ), patch.object(main.subprocess, "run") as run_call:
-            self.assertTrue(main.LayoutSwitcher._sync_fcitx_wayland_layout("en"))
+        ), patch.object(main.subprocess, "run") as run_call, patch.dict(
+            os.environ, {"XDG_SESSION_TYPE": "wayland"}
+        ):
+            self.assertTrue(main.LayoutSwitcher._switch_kde("en"))
+        run_call.assert_not_called()
 
-        self.assertEqual([call.args[0][-1] for call in run_call.call_args_list], [
-            "-r", "keyboard-us", "multilang",
-        ])
-        self.assertEqual(len(methods), 4)
+    def test_kde_reports_the_current_language_from_kwin_including_syria_and_variants(self):
+        layouts = "([('sy', '', 'Arabic (Syria)'), ('us', '', 'English (US)')],)"
+        with patch.object(main.shutil, "which", return_value="/usr/bin/gdbus"), patch.object(
+            main.subprocess, "check_output", side_effect=[layouts, "(uint32 0,)", layouts, "(uint32 1,)"]
+        ):
+            self.assertEqual(main.LayoutSwitcher.current_kde_language(), "ar")
+            self.assertEqual(main.LayoutSwitcher.current_kde_language(), "en")
 
 
 class WindowsInputTests(unittest.TestCase):
@@ -415,9 +390,10 @@ class WindowsInputTests(unittest.TestCase):
         self.assertTrue(monitor.finish_native_word(" ", hwnd=123))
         self.assertEqual(monitor.listener.queued, [(5, "hello ")])
         self.assertTrue(monitor.pending_layout_switch_requested)
-        monitor.switcher.switch.assert_called_once_with("en", hwnd=123)
+        monitor.switcher.switch.assert_not_called()
         self.assertTrue(monitor.busy)
         monitor.native_replacement_complete(True)
+        monitor.switcher.switch.assert_called_once_with("en", hwnd=123)
         self.assertFalse(monitor.busy)
         self.assertIn("English", statuses[-1])
 
@@ -446,60 +422,72 @@ class BackgroundStartTests(unittest.TestCase):
         app.root.withdraw.assert_not_called()
 
 
-@unittest.skipUnless(hasattr(socket, "AF_UNIX"), "Unix domain sockets are Linux-only here")
 class WaylandIpcTests(unittest.TestCase):
-    def test_fcitx_multilang_activation_is_verified(self):
-        with patch.object(main.shutil, "which", return_value="/usr/bin/fcitx5-remote"):
+    def test_fcitx_multilang_module_activation_is_verified(self):
+        addons = (
+            "([('keyboard', 'Keyboard', 'Always true, never false', 0, true, true), "
+            "('multilang', 'Multilang', '', 3, false, true)],)"
+        )
+        with patch.object(main.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}"):
             with patch.object(main.subprocess, "run") as run:
-                with patch.object(
-                    main.subprocess, "check_output", return_value="multilang\n"
-                ):
+                with patch.object(main.subprocess, "check_output", return_value=addons):
                     self.assertTrue(main.LayoutSwitcher.activate_fcitx_multilang())
             run.assert_called_once_with(
-                ["/usr/bin/fcitx5-remote", "-s", "multilang"],
+                ["/usr/bin/fcitx5-remote", "--check"],
                 check=True,
                 stdout=main.subprocess.DEVNULL,
                 stderr=main.subprocess.DEVNULL,
                 timeout=2,
             )
 
-    def test_fcitx_multilang_activation_reports_wrong_current_method(self):
-        with patch.object(main.shutil, "which", return_value="/usr/bin/fcitx5-remote"):
+    def test_fcitx_multilang_activation_reports_missing_or_disabled_addon(self):
+        addons = (
+            "([('keyboard', 'Keyboard', '', 0, true, true), "
+            "('multilang', 'Multilang', 'Always true, never false', 3, false, false)],)"
+        )
+        with patch.object(main.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}"):
             with patch.object(main.subprocess, "run"):
-                with patch.object(main.subprocess, "check_output", return_value="keyboard-sy\n"):
+                with patch.object(main.subprocess, "check_output", return_value=addons):
+                    self.assertFalse(main.LayoutSwitcher.activate_fcitx_multilang())
+
+    def test_gvariant_parser_handles_typed_empty_arrays_and_quoted_booleans(self):
+        self.assertEqual(layout_switcher._parse_gvariant_literal("(@a(sssibb) [],)"), ([],))
+        self.assertEqual(layout_switcher._parse_gvariant_literal("(@a{sv} {},)"), ({},))
+        self.assertEqual(
+            layout_switcher._parse_gvariant_literal("('Always true, never false', uint32 1, false)"),
+            ("Always true, never false", 1, False),
+        )
+        with patch.object(main.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}"):
+            with patch.object(main.subprocess, "run"):
+                with patch.object(main.subprocess, "check_output", return_value="(@a(sssibb) [],)"):
                     self.assertFalse(main.LayoutSwitcher.activate_fcitx_multilang())
 
     def test_fcitx_multilang_activation_requires_remote_tool(self):
         with patch.object(main.shutil, "which", return_value=None):
             self.assertFalse(main.LayoutSwitcher.activate_fcitx_multilang())
 
-    def test_wayland_switches_immediately_after_confident_words_in_both_directions(self):
-        monitor = main.TypingMonitor(lambda _status: None)
+    def test_wayland_returns_in_process_switch_target_in_both_directions(self):
+        statuses = []
+        monitor = main.TypingMonitor(statuses.append)
         monitor.enabled = True
         monitor._recognize = lambda word: {
             "اثممخ": ("hello", "en"),
             "hgg,pm": ("اللوحة", "ar"),
         }.get(word, (None, None))
-        switch_calls = []
-        first_switch = threading.Event()
-        second_switch = threading.Event()
 
-        def record_switch(language):
-            switch_calls.append(language)
-            (first_switch if len(switch_calls) == 1 else second_switch).set()
-            return True
-
-        monitor.switcher.switch = record_switch
         self.assertEqual(
-            monitor.correct_wayland_word("اثممخ"), ("hello", "en", None)
+            monitor.correct_wayland_word("اثممخ"), ("hello", "en", True)
         )
-        self.assertTrue(first_switch.wait(timeout=1))
+        self.assertIn("English", statuses[-1])
         self.assertEqual(
-            monitor.correct_wayland_word("hgg,pm"), ("اللوحة", "ar", None)
+            monitor.correct_wayland_word("hgg,pm"), ("اللوحة", "ar", True)
         )
-        self.assertTrue(second_switch.wait(timeout=1))
-        self.assertEqual(switch_calls, ["en", "ar"])
+        self.assertIn("العربية", statuses[-1])
 
+    @unittest.skipUnless(
+        os.name == "posix" and hasattr(socketserver, "ThreadingUnixStreamServer"),
+        "Unix domain socket server is POSIX-only",
+    )
     def test_fcitx_ipc_serves_readiness_and_word_correction(self):
         old_runtime = os.environ.get("XDG_RUNTIME_DIR")
         with tempfile.TemporaryDirectory() as runtime:

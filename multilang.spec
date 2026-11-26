@@ -17,6 +17,7 @@ a = Analysis(
     datas=required_data + [(str(root / "LICENSE"), ".")],
     hiddenimports=[
         "pynput.keyboard._win32",
+        "pynput.mouse._win32",
         "pynput._util.win32",
         "pystray._win32",
         "pystray._util.win32",
