@@ -19,6 +19,7 @@ a = Analysis(
         "pynput.keyboard._win32",
         "pynput.mouse._win32",
         "pynput._util.win32",
+        "pystray",
         "pystray._win32",
         "pystray._util.win32",
         "PIL.ImageWin",

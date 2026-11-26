@@ -114,11 +114,17 @@ mod tests {
         let correction: CorrectionCallback = never_corrects;
         let status: StatusCallback = ignore_status;
         let executable = std::env::current_exe().expect("current executable path");
-        let dll_path = executable
-            .parent()
-            .and_then(|deps| deps.parent())
-            .expect("release directory")
+        let manifest_target = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("debug")
             .join("multilang_native.dll");
+        let dll_path = executable
+            .ancestors()
+            .skip(1)
+            .map(|dir| dir.join("multilang_native.dll"))
+            .find(|candidate| candidate.is_file())
+            .or_else(|| manifest_target.is_file().then_some(manifest_target))
+            .expect("could not find built multilang_native.dll in Cargo target directories");
         let mut wide_path: Vec<u16> = dll_path.as_os_str().encode_wide().collect();
         wide_path.push(0);
 

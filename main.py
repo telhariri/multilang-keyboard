@@ -4,6 +4,7 @@ import argparse
 import collections.abc
 import contextlib
 import ctypes
+import importlib.util
 import logging
 import os
 import platform
@@ -13,8 +14,9 @@ import sys
 import threading
 import time
 import tkinter as tk
-import pystray
 from PIL import Image, ImageDraw
+
+pystray = None
 
 import recognizer
 from layout_switcher import LayoutSwitcher
@@ -51,11 +53,57 @@ logger = logging.getLogger("multilang")
 
 try:
     import pyperclip
-    from pynput import keyboard, mouse
+    if importlib.util.find_spec("pynput") is None:
+        raise ModuleNotFoundError("No module named 'pynput'")
 except ImportError as exc:
     raise SystemExit(
         "المكتبات المطلوبة غير مثبّتة. شغّل: python -m pip install -r requirements.txt"
     ) from exc
+
+try:
+    from pynput import keyboard, mouse
+except Exception:
+    if platform.system() != "Linux":
+        raise
+
+    class _HeadlessKey:
+        space = object()
+        backspace = object()
+        delete = object()
+        enter = object()
+        tab = object()
+        esc = object()
+        ctrl = object()
+        ctrl_l = object()
+        ctrl_r = object()
+        alt = object()
+        alt_l = object()
+        alt_r = object()
+        cmd = object()
+        cmd_l = object()
+        cmd_r = object()
+        caps_lock = object()
+        num_lock = object()
+        scroll_lock = object()
+        shift = object()
+        shift_l = object()
+        shift_r = object()
+
+    class _HeadlessListener:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("X11 display is not available")
+
+    class _HeadlessController:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("X11 display is not available")
+
+    class keyboard:  # noqa: N801
+        Key = _HeadlessKey
+        Listener = _HeadlessListener
+        Controller = _HeadlessController
+
+    class mouse:  # noqa: N801
+        Listener = _HeadlessListener
 
 try:
     import arabic_reshaper
@@ -672,6 +720,11 @@ class App:
     def _ensure_tray(self):
         if self.tray_icon:
             return
+        global pystray
+        if pystray is None:
+            import pystray as _pystray
+
+            pystray = _pystray
         image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
         draw.rounded_rectangle((4, 4, 60, 60), radius=12, fill=(37, 99, 235, 255))
