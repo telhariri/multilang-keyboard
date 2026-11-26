@@ -255,24 +255,31 @@ public:
             return;
         }
         instance_->inputContextManager().registerProperty("multilangState", &factory_);
-        connections_.push_back(
-            instance_->watchEvent<fcitx::EventType::InputContextKeyEvent>(
-                fcitx::EventWatcherPhase::PreInputMethod,
-                [this](fcitx::KeyEvent &event) { onKeyEvent(event); }));
-        connections_.push_back(
-            instance_->watchEvent<fcitx::EventType::InputContextReset>(
-                fcitx::EventWatcherPhase::PreInputMethod,
-                [this](fcitx::ResetEvent &event) { onReset(event); }));
-        connections_.push_back(
-            instance_->watchEvent<fcitx::EventType::InputContextFocusOut>(
-                fcitx::EventWatcherPhase::PreInputMethod,
-                [this](fcitx::FocusOutEvent &event) { onFocusOut(event); }));
-        connections_.push_back(
-            instance_->watchEvent<fcitx::EventType::InputContextSwitchInputMethod>(
-                fcitx::EventWatcherPhase::PreInputMethod,
-                [this](fcitx::InputContextSwitchInputMethodEvent &event) {
-                    onSwitchInputMethod(event);
-                }));
+        connections_.push_back(instance_->watchEvent(
+            fcitx::EventType::InputContextKeyEvent,
+            fcitx::EventWatcherPhase::PreInputMethod,
+            [this](fcitx::Event &event) {
+                onKeyEvent(static_cast<fcitx::KeyEvent &>(event));
+            }));
+        connections_.push_back(instance_->watchEvent(
+            fcitx::EventType::InputContextReset,
+            fcitx::EventWatcherPhase::PreInputMethod,
+            [this](fcitx::Event &event) {
+                onReset(static_cast<fcitx::ResetEvent &>(event));
+            }));
+        connections_.push_back(instance_->watchEvent(
+            fcitx::EventType::InputContextFocusOut,
+            fcitx::EventWatcherPhase::PreInputMethod,
+            [this](fcitx::Event &event) {
+                onFocusOut(static_cast<fcitx::FocusOutEvent &>(event));
+            }));
+        connections_.push_back(instance_->watchEvent(
+            fcitx::EventType::InputContextSwitchInputMethod,
+            fcitx::EventWatcherPhase::PreInputMethod,
+            [this](fcitx::Event &event) {
+                onSwitchInputMethod(
+                    static_cast<fcitx::InputContextSwitchInputMethodEvent &>(event));
+            }));
     }
 
 private:
